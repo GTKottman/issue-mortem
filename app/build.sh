@@ -13,7 +13,7 @@ rm -rf "$OUT" && mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/dex"
 
 "$BT/aapt2" compile --dir res -o "$OUT/res.zip"
 "$BT/aapt2" link -I "$JAR" --manifest AndroidManifest.xml -o "$OUT/base.apk" "$OUT/res.zip" \
-  --java "$OUT/gen" --min-sdk-version 29 --target-sdk-version 35 --version-code 1 --version-name 1.0
+  --java "$OUT/gen" --min-sdk-version 29 --target-sdk-version 35 --version-code 1 --version-name 0.0.1
 "$JAVA_HOME/bin/javac" -source 17 -target 17 -Xlint:-options -cp "$JAR" -d "$OUT/classes" \
   $(find src "$OUT/gen" -name '*.java')
 "$BT/d8" --min-api 29 --lib "$JAR" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')

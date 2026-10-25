@@ -53,7 +53,7 @@ Download the installer for your computer from the [Releases](../../releases) pag
 When the install finishes, a window shows what to type into the app:
 
 ```
-Issue Mortem Helper 1.0.0
+Issue Mortem Helper 0.0.1
 
 In the app, open Settings > Add computer and type:
 

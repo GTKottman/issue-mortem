@@ -3,7 +3,7 @@
 # pkgbuild, lipo, sips and iconutil, which come with macOS. Needs Go.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION=${VERSION:-1.0.0}
+VERSION=${VERSION:-0.0.1}
 work=$(mktemp -d)
 app="$work/root/Applications/Issue Mortem Helper.app/Contents"
 mkdir -p "$app/MacOS" "$app/Resources" "$work/root/Library/LaunchAgents" dist

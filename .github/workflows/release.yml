@@ -36,7 +36,7 @@ jobs:
           wix extension add -g WixToolset.Firewall.wixext/5.0.2 WixToolset.Util.wixext/5.0.2
       - shell: pwsh
         run: |
-          $v = if ($env:GITHUB_REF_NAME -like "v*") { $env:GITHUB_REF_NAME.Substring(1) } else { "1.0.0" }
+          $v = if ($env:GITHUB_REF_NAME -like "v*") { $env:GITHUB_REF_NAME.Substring(1) } else { "0.0.1" }
           ./packaging/build-windows.ps1 -Version $v
       - uses: actions/upload-artifact@v4
         with: {name: windows, path: "dist/*.msi"}

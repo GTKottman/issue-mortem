@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const version = "1.0.0"
+const version = "0.0.1"
 
 // With no command (or "serve") it serves: that's what the installers start at login. "info" starts it if it isn't
 // running and shows the name, address and key in a window (the Start menu, Applications and app menu entries).
