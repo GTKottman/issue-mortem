@@ -1,0 +1,10 @@
+[Unit]
+Description=Issue Mortem helper (screenshots for the Issue Mortem app)
+
+[Service]
+ExecStart=/usr/bin/issue-mortem-helper
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

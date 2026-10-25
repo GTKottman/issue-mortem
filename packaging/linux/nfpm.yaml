@@ -1,0 +1,27 @@
+# Linux packages (.deb, .rpm, Arch) for the helper. Built by packaging/build-linux.sh.
+name: issue-mortem-helper
+arch: ${ARCH}
+version: ${VERSION}
+maintainer: Issue Mortem
+description: Lets the Issue Mortem app take screenshots of this computer and save notes on it.
+homepage: ${HOMEPAGE}
+license: ${LICENSE}
+section: utils
+contents:
+  - src: dist/bin/issue-mortem-helper
+    dst: /usr/bin/issue-mortem-helper
+    file_info: {mode: 0755}
+  - src: packaging/linux/issue-mortem-helper.service
+    dst: /usr/lib/systemd/user/issue-mortem-helper.service
+  - src: packaging/linux/issue-mortem-helper.desktop
+    dst: /usr/share/applications/issue-mortem-helper.desktop
+  - src: packaging/icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/issue-mortem-helper.svg
+scripts:
+  postinstall: packaging/linux/postinstall.sh
+  preremove: packaging/linux/preremove.sh
+overrides:
+  deb:
+    recommends: [zenity]
+  rpm:
+    recommends: [zenity]

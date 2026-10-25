@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A raven flying across a full moon. 108dp canvas, art kept inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#8B66FF" android:fillAlpha="0.18"
+        android:pathData="M54,52 m-27,0 a27,27 0 1,0 54,0 a27,27 0 1,0 -54,0" />
+    <path android:fillColor="#E8E4EE"
+        android:pathData="M54,52 m-23,0 a23,23 0 1,0 46,0 a23,23 0 1,0 -46,0" />
+    <path android:fillColor="#D6D0E0"
+        android:pathData="M45,44 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 M62,60 m-5.5,0 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 M60,40 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0" />
+    <path android:fillColor="#16141A"
+        android:pathData="M80,57 L74.5,55.2 C73.5,53 71,52 68.5,53 C66,53.8 63.5,55 61,55.6 C58,50 54,43 46,38 L48.5,42.5 L43,40.5 L46.5,45 L40.5,44 L45,48 L39,48.5 L45,51.5 C46,53.5 48,55.5 50,57 C44,57.5 37,59 31,63 L37,63.2 L33,66.5 L39.5,65 L38,68.5 L44,64.6 C49,64.5 55,64 60,63.5 C64,63 68,61.5 71,59.5 C72.5,58.6 75,58 80,57 Z" />
+</vector>

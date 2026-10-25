@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Issue Mortem Helper
+Comment=Show the address and key to type into the Issue Mortem app
+Exec=/usr/bin/issue-mortem-helper info
+Icon=issue-mortem-helper
+Terminal=false
+Categories=Utility;

@@ -1,0 +1,48 @@
+<!--
+  Windows installer for the helper (WiX 5). Built by packaging/build-windows.ps1.
+  Installs to Program Files, starts the helper (no window) at every login, adds "Issue Mortem Helper" to the Start
+  menu (shows the address and key), lets Tailscale addresses (100.64.0.0/10) through the firewall, and shows the
+  address and key when the install finishes.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
+  <Package Name="Issue Mortem Helper" Manufacturer="Issue Mortem" Version="$(Version)"
+           UpgradeCode="86004c43-fbd4-46cb-97ca-a422f128fe69" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer Issue Mortem Helper is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="icon.ico" SourceFile="icon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="icon.ico" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Issue Mortem Helper">
+        <Component Id="Helper">
+          <File Id="HelperExe" Source="issue-mortem-helper.exe" KeyPath="yes">
+            <fire:FirewallException Id="TailscaleIn" Name="Issue Mortem Helper (Tailscale)" Profile="all">
+              <fire:RemoteAddress Value="100.64.0.0/10" />
+            </fire:FirewallException>
+          </File>
+          <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                         Name="Issue Mortem Helper" Type="string" Value="&quot;[#HelperExe]&quot;" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenu">
+        <Shortcut Id="InfoShortcut" Name="Issue Mortem Helper" Description="Show the address and key for the Issue Mortem app"
+                  Target="[#HelperExe]" Arguments="info" Icon="icon.ico" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKLM" Key="Software\Issue Mortem\Helper" Name="StartMenu" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- A running helper would lock its .exe during an upgrade or uninstall. -->
+    <SetProperty Id="StopHelper" Value="&quot;[System64Folder]taskkill.exe&quot; /F /IM issue-mortem-helper.exe" Before="StopHelper" Sequence="execute" />
+    <CustomAction Id="StopHelper" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec" Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- Start it now and show the address and key, as the person who ran the installer. -->
+    <CustomAction Id="ShowInfo" FileRef="HelperExe" ExeCommand="info" Execute="immediate" Impersonate="yes" Return="asyncNoWait" />
+    <InstallExecuteSequence>
+      <Custom Action="StopHelper" Before="InstallFiles" />
+      <Custom Action="ShowInfo" After="InstallFinalize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

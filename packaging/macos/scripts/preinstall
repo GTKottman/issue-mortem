@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stop a running helper so an upgrade can replace it.
+user=$(stat -f%Su /dev/console)
+uid=$(id -u "$user" 2>/dev/null) && launchctl bootout "gui/$uid/app.issuemortem.helper" 2>/dev/null
+exit 0

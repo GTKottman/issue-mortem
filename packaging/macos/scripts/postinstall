@@ -1,0 +1,10 @@
+#!/bin/sh
+# Start the helper now for whoever is logged in, then show them the address and key.
+plist=/Library/LaunchAgents/app.issuemortem.helper.plist
+chown root:wheel "$plist"; chmod 644 "$plist"
+user=$(stat -f%Su /dev/console)
+[ "$user" = root ] && exit 0
+uid=$(id -u "$user")
+launchctl bootstrap "gui/$uid" "$plist" 2>/dev/null || launchctl kickstart -k "gui/$uid/app.issuemortem.helper"
+launchctl asuser "$uid" sudo -u "$user" open -a "/Applications/Issue Mortem Helper.app"
+exit 0
