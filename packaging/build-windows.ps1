@@ -1,7 +1,7 @@
 # Builds dist\issue-mortem-helper-<version>-windows-x64.msi on Windows.
 # Needs Go and WiX 5: dotnet tool install --global wix --version 5.0.2
 #   wix extension add -g WixToolset.Firewall.wixext/5.0.2 WixToolset.Util.wixext/5.0.2
-param([string]$Version = "0.0.1")
+param([string]$Version = "0.0.2")
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 New-Item -ItemType Directory -Force dist | Out-Null
