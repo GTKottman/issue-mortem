@@ -3,7 +3,7 @@
 # Needs Go and nfpm (go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export VERSION=${VERSION:-0.0.2} HOMEPAGE=${HOMEPAGE:-https://github.com/GTKottman/issue-mortem} LICENSE=${LICENSE:-GPL-3.0-or-later}
+export VERSION=${VERSION:-0.0.3} HOMEPAGE=${HOMEPAGE:-https://github.com/GTKottman/issue-mortem} LICENSE=${LICENSE:-GPL-3.0-or-later}
 mkdir -p dist
 for arch in amd64 arm64; do
   export ARCH=$arch BIN=dist/bin/issue-mortem-helper

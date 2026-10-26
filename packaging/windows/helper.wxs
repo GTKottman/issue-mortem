@@ -1,7 +1,8 @@
 <!--
   Windows installer for the helper (WiX 5). Built by packaging/build-windows.ps1.
   Installs to Program Files, starts the helper (no window) at every login, adds "Issue Mortem Helper" to the Start
-  menu (shows the address and key), lets Tailscale addresses (100.64.0.0/10) through the firewall, and shows the
+  menu (shows the address and key), lets the home network and Tailscale addresses (100.64.0.0/10) through the
+  firewall, and shows the
   address and key when the install finishes.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
@@ -20,6 +21,7 @@
             <fire:FirewallException Id="TailscaleIn" Name="Issue Mortem Helper (Tailscale)" Profile="all">
               <fire:RemoteAddress Value="100.64.0.0/10" />
             </fire:FirewallException>
+            <fire:FirewallException Id="HomeIn" Name="Issue Mortem Helper (home network)" Profile="all" Scope="localSubnet" />
           </File>
           <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run"
                          Name="Issue Mortem Helper" Type="string" Value="&quot;[#HelperExe]&quot;" />

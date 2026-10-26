@@ -902,7 +902,8 @@ public class MainActivity extends Activity {
                     busy = false;
                     if (drawing) status.setText("Couldn't capture " + pc.name + ": " + e.getMessage());
                     else showStart("Couldn't capture " + pc.name + ": " + e.getMessage()
-                            + "\nIs Tailscale on, on both devices, and is the helper running on " + pc.name + "?");
+                            + "\nAre both on the same home network (or Tailscale on, on both), and is the helper running on "
+                            + pc.name + "?");
                 });
             }
         });
@@ -1248,10 +1249,18 @@ public class MainActivity extends Activity {
         }
 
         body.addView(section("Computers"));
-        TextView help = text("Each computer runs the Issue Mortem helper. Sync finds them over Tailscale, or type the address and key its window shows.", MUTED, 15);
+        TextView help = text("Each computer runs the Issue Mortem helper. Sync finds them on your home network or over Tailscale, or type the address and key its window shows.", MUTED, 15);
         help.setPadding(0, dp(4), 0, dp(12));
         body.addView(help);
         List<Prefs.Computer> computers = prefs.computers();
+        for (Prefs.Computer c : computers) {
+            if (Sync.homeOnly(c.address)) {
+                TextView away = text(AWAY, MUTED, 15);
+                away.setPadding(0, 0, 0, dp(12));
+                body.addView(away);
+                break;
+            }
+        }
         for (int i = 0; i < computers.size(); i++) {
             Prefs.Computer c = computers.get(i);
             int at = i;
@@ -1267,11 +1276,17 @@ public class MainActivity extends Activity {
             names.setPadding(dp(16), 0, dp(12), 0);
             names.addView(text(c.name, TEXT, 17));
             TextView result = text(c.address, MUTED, 14);
+            result.setSingleLine(true);
+            result.setEllipsize(TextUtils.TruncateAt.MIDDLE); // relay addresses are long
             names.addView(result);
             row.addView(names, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
             TextView online = text("Checking…", MUTED, 14);
-            online.setPadding(0, 0, dp(16), 0);
-            row.addView(online);
+            if (getResources().getConfiguration().screenWidthDp < 600) {
+                names.addView(online); // phones: under the address, so the name keeps its room
+            } else {
+                online.setPadding(0, 0, dp(16), 0);
+                row.addView(online);
+            }
             checkOnline(c, online);
             row.addView(pill("Test", false, v -> testComputer(c, result)));
             row.addView(pill("Edit", false, v -> computerDialog(at)), spaced(8));
@@ -1377,13 +1392,17 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** Sync: listen for a minute while the helpers on the person's computers offer themselves over Tailscale. */
+    static final String AWAY = "Without Tailscale this works on your home network only. To use it away from home, "
+            + "use Tailscale or your own server (an Issue Mortem relay; see the helper's window).";
+
+    /** Sync: listen for a minute while the helpers on the person's computers offer themselves. */
     private void syncDialog() {
-        TextView log = text("Looking for computers on your Tailscale…\n\nEach one needs the Issue Mortem helper "
-                + "running and Tailscale on. Nothing to do on the computer.", TEXT, 16);
+        TextView log = text("Looking for computers on your home network and Tailscale…\n\nEach one needs the Issue "
+                + "Mortem helper running. Nothing to do on the computer.", TEXT, 16);
         log.setPadding(dp(24), dp(16), dp(24), dp(8));
         Sync sync = new Sync();
         int[] found = {0};
+        boolean[] warned = {false};
         AlertDialog d = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Sync")
                 .setView(log)
@@ -1402,6 +1421,10 @@ public class MainActivity extends Activity {
                     found[0]++;
                     boolean added = keepComputer(c);
                     log.append("\n\n" + (added ? "Added " : "Updated ") + c.name + " (" + c.address + ")");
+                    if (Sync.homeOnly(c.address) && !warned[0]) {
+                        warned[0] = true;
+                        log.append("\n" + AWAY);
+                    }
                 });
             }
 
@@ -1410,7 +1433,8 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (error != null) log.append("\n\n" + error);
                     else if (found[0] == 0)
-                        log.append("\n\nNo computers found. Is the helper installed on the computer, and is Tailscale on on both?");
+                        log.append("\n\nNo computers found. Is the helper installed on the computer, and are both on the "
+                                + "same home network (or Tailscale on, on both)?");
                     else log.append("\n\nDone.");
                 });
             }
@@ -1441,7 +1465,7 @@ public class MainActivity extends Activity {
         LinearLayout form = column();
         form.setPadding(dp(24), dp(8), dp(24), 0);
         EditText name = field(form, "Name", "Desk PC", c.name);
-        EditText address = field(form, "Address", "100.101.102.103:8642", c.address);
+        EditText address = field(form, "Address", "192.168.1.20:8642", c.address);
         EditText key = field(form, "Key", "from the helper's window", c.key);
         address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);

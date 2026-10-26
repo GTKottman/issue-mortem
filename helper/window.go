@@ -9,6 +9,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -28,7 +29,7 @@ func local(r *http.Request, port int) bool {
 		(r.Host == fmt.Sprintf("127.0.0.1:%d", port) || r.Host == fmt.Sprintf("localhost:%d", port))
 }
 
-func windowHandler(name, key, folder string, port int) http.Handler {
+func windowHandler(name, key, folder string, port int, api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := web.ReadFile("web/index.html")
@@ -57,9 +58,21 @@ func windowHandler(name, key, folder string, port int) http.Handler {
 		for i := range other {
 			other[i] = fmt.Sprintf("%s:%d", other[i], port)
 		}
+		rc, status := relayStatus()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"name": name, "tailscale": tailscale, "other": other,
-			"key": key, "folder": folder, "version": version})
+			"key": key, "folder": folder, "version": version,
+			"relay": map[string]string{"url": rc.URL, "status": status, "address": relayAddress(key)}})
+	})
+	mux.HandleFunc("POST /local/relay", func(w http.ResponseWriter, r *http.Request) {
+		var c relayConfig
+		if r.Header.Get("X-Local") != "1" || json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&c) != nil {
+			http.Error(w, "no", http.StatusForbidden)
+			return
+		}
+		if err := setRelay(c, api, key, true); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
 	})
 	mux.HandleFunc("POST /local/open-folder", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Local") != "1" {

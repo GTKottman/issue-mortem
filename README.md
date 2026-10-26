@@ -21,20 +21,26 @@ It has two parts:
 | **Issue Mortem** app | your Android tablet or phone | drawing, notes, GitHub issues |
 | **Issue Mortem helper** | each computer you want screenshots from | takes the screenshot, saves notes you Send |
 
-The app and the helper talk over [Tailscale](https://tailscale.com), a free private network between your own
-devices, so this works from anywhere without opening anything to the internet.
+The app and the helper talk over your **home network** (the same Wi-Fi or router). To use it away from home, use
+[Tailscale](https://tailscale.com), a free private network between your own devices, or
+[your own server](#your-own-server-relay) running the small Issue Mortem relay.
 
 ---
 
 ## Setup
 
-### 1. Tailscale (once, on every device)
+### 1. Network
+
+**At home**: nothing to set up. Keep the tablet and the computers on the same home network (Wi-Fi or router).
+
+**Away from home (optional)**: without Tailscale it works on your home network only. To use it anywhere, use
+Tailscale, or [your own server](#your-own-server-relay) with the Issue Mortem relay. Tailscale, once on every device:
 
 1. Make a free account at [tailscale.com](https://tailscale.com).
 2. Install Tailscale on your **tablet** (Play Store) and on **each computer**
    ([downloads](https://tailscale.com/download)), and sign in to the same account on all of them.
 3. Check the devices show up at [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines).
-   Each one gets an address starting with `100.`. That's the address you'll use.
+   Each one gets an address starting with `100.`. That's the address that works from anywhere.
 
 ### 2. The helper (on each computer)
 
@@ -50,7 +56,7 @@ Download the installer for your computer from the [Releases](../../releases) pag
 
 (Raspberry Pi and other ARM Linux: the `arm64` / `aarch64` files.)
 
-When the install finishes, the helper's window opens. It shows this computer's name, Tailscale address and key, each
+When the install finishes, the helper's window opens. It shows this computer's name, address and key, each
 with a **Copy** button, and an **Open** button for the folder where notes you Send or Save land (`~/Issue Mortem`).
 It opens as an app window in Chrome, Edge, Chromium or Brave if you have one, otherwise in your default browser, and
 only this computer can open it.
@@ -60,9 +66,9 @@ The helper then runs in the background and starts by itself at every login. To s
 
 Per system:
 
-- **Windows**: if SmartScreen warns, choose *More info > Run anyway*. The installer lets only Tailscale addresses
-  (`100.64.0.0/10`) through the firewall. Uninstall from *Settings > Apps*.
-- **Mac**: the installer isn't signed by Apple yet, so the first time, right-click it and choose *Open* (or allow it in
+- **Windows**: if SmartScreen warns, choose *More info > Run anyway*. The installer lets only your home network
+  (local subnet) and Tailscale addresses (`100.64.0.0/10`) through the firewall. Uninstall from *Settings > Apps*.
+- **Mac**: if macOS asks whether Issue Mortem Helper may accept incoming network connections, allow it. The installer isn't signed by Apple yet, so the first time, right-click it and choose *Open* (or allow it in
   System Settings > Privacy & Security). The first screenshot makes macOS ask for **Screen Recording** permission for
   Issue Mortem Helper: allow it, then open Issue Mortem Helper once more. It captures the main display. To uninstall,
   run `launchctl bootout gui/$(id -u)/app.issuemortem.helper; sudo rm -rf "/Applications/Issue Mortem Helper.app" /Library/LaunchAgents/app.issuemortem.helper.plist`.
@@ -81,15 +87,48 @@ key; the app then needs the new one).
 
 1. Download `Issue Mortem.apk` from [Releases](../../releases) on the tablet and open it. Android asks to allow
    installing from your browser or Files app: allow it.
-2. Open **Settings** and tap **Sync**. For a minute the app listens, and every computer with the helper running finds
-   it over Tailscale and adds itself (name, address and key). Nothing to do on the computers. Each one then shows
+2. Open **Settings** and tap **Sync**. For a minute the app looks for computers, and every computer with the helper
+   running finds it and adds itself (name, address and key). Nothing to do on the computers. Each one then shows
    *Online* in Settings.
-   - Sync needs Tailscale on, on both, and signed in to the **same Tailscale account**: helpers only offer themselves
-     to Android devices of their own account.
+   - On the home network, Sync needs the tablet and the computer on the same network. A computer found this way works
+     at home only; the app says so.
+   - Over Tailscale, Sync needs Tailscale on, on both, and signed in to the **same Tailscale account**: helpers only
+     offer themselves to Android devices of their own account.
    - Or tap **Add computer** and type the name, address and key from the helper's window.
 
    Add as many computers as you like. With more than one, the start page shows **From** so you can pick where the
    screenshot comes from.
+
+### Your own server (relay)
+
+If you have a server with a domain (a VPS, or a home server reachable from the internet), the Issue Mortem relay lets
+the app reach your computers from anywhere, without Tailscale and without opening anything on your home router. Each
+helper dials out to the relay; the app talks to the relay over HTTPS.
+
+**On the server**, run the relay behind HTTPS, with a long password of your own as `RELAY_SECRET`:
+
+```sh
+docker build -t issue-mortem-relay https://github.com/GTKottman/issue-mortem.git#main:relay
+docker run -d --name issue-mortem-relay --restart unless-stopped -e RELAY_SECRET='a long password' \
+  -p 127.0.0.1:8080:8080 issue-mortem-relay
+```
+
+Then point your HTTPS proxy at `127.0.0.1:8080` for a name like `relay.example.com`. With Caddy that's one line in
+the Caddyfile: `relay.example.com { reverse_proxy 127.0.0.1:8080 }`. With Coolify or another Docker panel, add
+`relay/` from this repo as a Dockerfile app on port 8080 with the `RELAY_SECRET` variable and a domain. Opening
+`https://relay.example.com` should say *Issue Mortem relay is running.*
+
+**On each computer**, open the helper's window, and under **Away from home: your own server** type the relay's
+address and password, then **Save**. It shows *Connected* and an **Away** address like
+`https://relay.example.com/c/9b857805b44eb09c83839ffb`.
+
+**In the app**, tap **Add computer** and type that Away address with the computer's key. It works anywhere the tablet
+has internet. (At home you can keep the home-network entry too and pick either under **From**.)
+
+- Only helpers with the relay password can connect, and the app's calls still need each computer's key.
+- The relay sees the traffic (keys and screenshots) in the clear inside the server, so run it only on a server you
+  trust. Always put it behind HTTPS.
+- Away addresses come from the key: after `-new-key` the computer gets a new Away address.
 
 ### 4. GitHub (once)
 
@@ -140,12 +179,17 @@ In a private repo the pictures stay private: only people who can see the repo ca
 ## Security
 
 - The helper only answers requests that carry its key, and waits a second after a wrong one.
-- Sync: every few seconds the helper asks `tailscale status` for the online Android devices of its own Tailscale
-  account and offers them its name, address and key. A device only takes the offer during the minute after you tap
-  **Sync**, and only from a Tailscale address.
+- Sync over Tailscale: every few seconds the helper asks `tailscale status` for the online Android devices of its own
+  Tailscale account and offers them its name, address and key.
+- Sync on the home network: while syncing, the app broadcasts a hello on the network, and the helper offers its name,
+  address and key to any home-network device that sends one. So **anyone on your network can get the key** by sending
+  that hello. Fine on your own home network; on a shared network (office, dorm, café) use Tailscale and add the
+  computer by hand.
+- A device only takes an offer during the minute after you tap **Sync**, and only from a Tailscale or home-network
+  address.
 - The helper's window is served only to the computer itself (`http://127.0.0.1:8642/`).
-- It listens on every network of the computer. Use the **Tailscale** address in the app: Tailscale encrypts the
-  traffic. Over plain Wi-Fi the key and screenshots travel unencrypted, so anyone on that Wi-Fi could read them.
+- It listens on every network of the computer. On the home network the key and screenshots travel unencrypted, so
+  anyone on that network could read them. Tailscale encrypts the traffic.
 - Anyone with the key can see your screen. Keep it private; `-new-key` replaces it.
 - The GitHub token is stored in the app's private storage on your device.
 
@@ -175,6 +219,7 @@ Pushing a tag like `v1.0.0` builds all of them plus the app on GitHub Actions an
 
 The helper's API, if you want to write your own: `GET /api/hello`, `GET /api/screen` (PNG) and
 `PUT /api/file?path=/folder/name.ext`, each with the header `X-Key: <key>`. Sync: while syncing, the app listens on
-port 8642 for `POST /sync` with `{"name", "address", "key"}`.
+port 8642 for `POST /sync` with `{"name", "address", "key"}`, and broadcasts the UDP text `issue-mortem-sync` to
+port 8642 every 2 seconds; the helper listens for it on UDP 8642.
 
 The helper's window uses Barlow Condensed (SIL Open Font License; copies in `helper/web/OFL.txt` and `app/FONT-OFL.txt`); the app ships the same font.

@@ -47,6 +47,7 @@
   .row:last-of-type { border-bottom: 0; }
   .label { color: var(--muted); }
   .value { font: 500 18px/1.3 var(--mono); overflow-wrap: anywhere; }
+  .value.long { font-size: 13px; }
   .value.small { font: 400 14px/1.4 var(--sans); color: var(--muted); }
   .value .alt { display: block; font-size: 13px; color: var(--muted); font-family: var(--sans); }
 
@@ -62,6 +63,11 @@
   footer { display: flex; justify-content: space-between; margin-top: var(--s5); padding-top: var(--s3);
            border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
   .error { color: var(--warn); }
+  form.relay { display: grid; gap: var(--s2); margin-top: var(--s3); }
+  form.relay input { height: var(--control); padding: 0 var(--s3); border-radius: var(--r); border: 1px solid var(--outline);
+                     background: var(--raised); color: var(--text); font: 400 14px var(--sans); }
+  form.relay .actions { display: flex; align-items: center; gap: var(--s3); }
+  .hint { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -74,7 +80,7 @@
   </header>
 
   <p class="sync"><b>On your tablet or phone: Settings › Sync.</b>
-    <small>It finds this computer over Tailscale. Nothing to do here.</small></p>
+    <small>It finds this computer on your home network or over Tailscale. Nothing to do here.</small></p>
 
   <div id="body"></div>
 
@@ -84,9 +90,9 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-function row(label, value, copy, alt) {
+function row(label, value, copy, alt, cls = '') {
   return `<div class="row"><span class="label">${label}</span>
-    <span class="value">${esc(value)}${alt ? `<span class="alt">${esc(alt)}</span>` : ''}</span>
+    <span class="value ${cls}">${esc(value)}${alt ? `<span class="alt">${esc(alt)}</span>` : ''}</span>
     ${copy ? `<button data-copy="${esc(copy)}"${label === 'Key' ? ' id="copy-key"' : ''}>Copy</button>` : '<span></span>'}</div>`;
 }
 
@@ -112,21 +118,37 @@ async function load() {
   }
   document.title = 'Issue Mortem Helper · ' + i.name;
   $('version').textContent = 'Version ' + i.version;
-  let address;
-  if (i.tailscale.length) {
-    address = row('Address', i.tailscale[0], i.tailscale[0], i.tailscale.length > 1 ? 'also ' + i.tailscale.slice(1).join(', ') : '');
-  } else {
-    address = `<p class="warn"><b>Tailscale isn't running on this computer.</b><br>Sync and the app need it. Start
-      Tailscale and sign in${i.other.length ? '; until then this works on the same Wi-Fi only: ' + esc(i.other.join(', ')) : ''}.</p>`;
-  }
+  const all = [...i.tailscale, ...i.other];
+  const address = all.length
+    ? row('Address', all[0], all[0], all.length > 1 ? 'also ' + all.slice(1).join(', ') : '')
+    : `<p class="warn"><b>This computer isn't on a network.</b><br>Connect it to your home Wi-Fi or network.</p>`;
+  const away = i.tailscale.length ? '' : `<p class="warn">This works on your home network. To use it away from home,
+      use Tailscale or your own server (below).</p>`;
   $('body').innerHTML = `<h2>Or type these in the app (Settings › Add computer)</h2>
-    ${row('Name', i.name, i.name)}${i.tailscale.length ? address : ''}${row('Key', i.key, i.key)}
-    ${i.tailscale.length ? '' : address}
+    ${row('Name', i.name, i.name)}${address}${row('Key', i.key, i.key)}
+    ${away}
+    <h2>Away from home: your own server</h2>
+    <p class="hint">With an Issue Mortem relay on your own server, the app reaches this computer from anywhere.
+      Type the server's address and relay password (whoever set up the server has them).</p>
+    ${i.relay.address ? row('Away', i.relay.address, i.relay.address, i.relay.status, 'long') : ''}
+    <form class="relay" id="relay">
+      <input name="url" placeholder="https://relay.example.com" value="${esc(i.relay.url)}" autocomplete="off">
+      <input name="secret" type="password" placeholder="Relay password${i.relay.url ? ' (type it again to change)' : ''}" autocomplete="off">
+      <div class="actions"><button type="submit">Save</button>${i.relay.url ? '<button type="button" id="relay-off">Turn off</button>' : ''}
+        <span class="hint" id="relay-msg"></span></div>
+    </form>
     <h2>Notes you Send or Save</h2>
     <div class="row"><span class="label">Folder</span><span class="value small">${esc(i.folder)}</span>
       <button id="open">Open</button></div>`;
   document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = () => copy(b));
   $('open').onclick = () => fetch('/local/open-folder', { method: 'POST', headers: { 'X-Local': '1' } });
+  const saveRelay = async (url, secret) => {
+    const r = await fetch('/local/relay', { method: 'POST', headers: { 'X-Local': '1' }, body: JSON.stringify({ url, secret }) });
+    if (!r.ok) { $('relay-msg').textContent = await r.text(); return; }
+    setTimeout(load, 1500);
+  };
+  $('relay').onsubmit = (e) => { e.preventDefault(); const f = e.target; saveRelay(f.url.value, f.secret.value); };
+  if ($('relay-off')) $('relay-off').onclick = () => saveRelay('', '');
 }
 load();
 

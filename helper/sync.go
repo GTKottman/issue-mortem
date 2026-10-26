@@ -3,7 +3,7 @@ package main
 // Sync: the app's Sync button makes the tablet listen on syncPort for a minute. Meanwhile every helper keeps asking
 // Tailscale which of the same person's Android devices are online and offers itself (name, address, key) to each one.
 // Tablets that aren't syncing simply refuse the connection. Only devices signed in to the same Tailscale account get
-// the key.
+// the key. Without Tailscale, lan.go does the same on the home network.
 
 import (
 	"bytes"

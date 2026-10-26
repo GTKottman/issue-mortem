@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-const version = "0.0.2"
+const version = "0.0.3"
 
 // With no command (or "serve") it serves: that's what the installers start at login. "info" starts it if it isn't
 // running and shows the name, address and key in its window (window.go) (the Start menu, Applications and app menu entries).
@@ -83,7 +83,10 @@ func main() {
 	}
 	log.Printf("listening on port %d", *port)
 	go offerLoop(name, key, *port)
-	api, window := handler(key, name, *folder), windowHandler(name, key, *folder, *port)
+	go lanLoop(name, key, *port)
+	api := handler(key, name, *folder)
+	window := windowHandler(name, key, *folder, *port, api)
+	startRelay(api, key)
 	log.Fatal(http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local(r, *port) && !strings.HasPrefix(r.URL.Path, "/api/") {
 			window.ServeHTTP(w, r)
@@ -102,11 +105,12 @@ func infoText(name, key string, port int, folder string) string {
 	for _, a := range tailscale {
 		fmt.Fprintf(&b, "Address:  %s:%d\n", a, port)
 	}
+	for _, a := range other {
+		fmt.Fprintf(&b, "Address:  %s:%d (home network)\n", a, port)
+	}
 	if len(tailscale) == 0 {
-		b.WriteString("Address:  no Tailscale address found. Is Tailscale running on this computer?\n")
-		for _, a := range other {
-			fmt.Fprintf(&b, "    (on the same Wi-Fi only: %s:%d)\n", a, port)
-		}
+		b.WriteString("\nThis works on your home network. To use it away from home, use Tailscale or your own server\n" +
+			"(an Issue Mortem relay: set it in this helper's window).\n")
 	}
 	b.WriteString("Key:  " + key + "\n\n")
 	b.WriteString("Notes you Send or Save from the app go to " + folder)
@@ -254,7 +258,7 @@ func loadKey(fresh bool) (string, error) {
 	return k.String(), os.WriteFile(file, []byte(k.String()+"\n"), 0o600)
 }
 
-// addresses returns this computer's Tailscale IPv4 addresses (100.64.0.0/10) and its other ones.
+// addresses returns this computer's Tailscale IPv4 addresses (100.64.0.0/10) and its home-network one.
 func addresses() (tailscale, other []string) {
 	_, tailnet, _ := net.ParseCIDR("100.64.0.0/10")
 	ifaces, _ := net.InterfaceAddrs()
@@ -265,9 +269,11 @@ func addresses() (tailscale, other []string) {
 		}
 		if tailnet.Contains(ipn.IP) {
 			tailscale = append(tailscale, ipn.IP.String())
-		} else {
-			other = append(other, ipn.IP.String())
 		}
+	}
+	// The home-network address is the one the computer reaches the router with (Docker and VM bridges are skipped).
+	if ip := net.ParseIP(localAddressFor(net.IPv4(1, 1, 1, 1))); ip != nil && private(ip) && !tailnet.Contains(ip) {
+		other = append(other, ip.String())
 	}
 	return tailscale, other
 }

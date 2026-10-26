@@ -81,7 +81,7 @@ func TestWindowOnlyHere(t *testing.T) {
 		t.Fatal("a web page under another name must not")
 	}
 	w := httptest.NewRecorder()
-	windowHandler("pc", "k", t.TempDir(), 8642).ServeHTTP(w, httptest.NewRequest("GET", "/local/info", nil))
+	windowHandler("pc", "k", t.TempDir(), 8642, nil).ServeHTTP(w, httptest.NewRequest("GET", "/local/info", nil))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("info without X-Local: %d", w.Code)
 	}
