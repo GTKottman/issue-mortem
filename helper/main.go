@@ -4,6 +4,8 @@
 //	GET /api/hello            {"name": "<computer name>", "version": "..."}, for the app's Test button
 //	GET /api/screen           the whole screen right now, as a PNG
 //	PUT /api/file?path=/x/y   saves the request body under the notes folder (never overwrites: adds " (2)" etc.)
+//
+// It also offers itself to the app's Sync button (sync.go).
 package main
 
 import (
@@ -28,7 +30,7 @@ import (
 const version = "0.0.1"
 
 // With no command (or "serve") it serves: that's what the installers start at login. "info" starts it if it isn't
-// running and shows the name, address and key in a window (the Start menu, Applications and app menu entries).
+// running and shows the name, address and key in its window (window.go) (the Start menu, Applications and app menu entries).
 func main() {
 	home, _ := os.UserHomeDir()
 	port := flag.Int("port", 8642, "port to listen on")
@@ -62,7 +64,9 @@ func main() {
 				time.Sleep(100 * time.Millisecond)
 			}
 		}
-		showInfo(text)
+		if openWindow(fmt.Sprintf("http://127.0.0.1:%d/", *port)) != nil {
+			showInfo(text) // no browser: the plain dialog
+		}
 		return
 	}
 
@@ -78,13 +82,21 @@ func main() {
 		log.Fatalf("can't listen on port %d: %v", *port, err)
 	}
 	log.Printf("listening on port %d", *port)
-	log.Fatal(http.Serve(ln, handler(key, name, *folder)))
+	go offerLoop(name, key, *port)
+	api, window := handler(key, name, *folder), windowHandler(name, key, *folder, *port)
+	log.Fatal(http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if local(r, *port) && !strings.HasPrefix(r.URL.Path, "/api/") {
+			window.ServeHTTP(w, r)
+			return
+		}
+		api.ServeHTTP(w, r)
+	})))
 }
 
 func infoText(name, key string, port int, folder string) string {
 	var b strings.Builder
 	b.WriteString("Issue Mortem Helper " + version + "\n\n")
-	b.WriteString("In the app, open Settings > Add computer and type:\n\n")
+	b.WriteString("In the app, open Settings and tap Sync. Or tap Add computer and type:\n\n")
 	b.WriteString("Name:  " + name + "\n")
 	tailscale, other := addresses()
 	for _, a := range tailscale {

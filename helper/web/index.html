@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue Mortem Helper</title>
+<link rel="icon" href="/icon.svg">
+<style>
+  @font-face { font-family: "Barlow Condensed"; font-weight: 600; src: url("/BarlowCondensed-SemiBold.ttf"); }
+  :root {
+    /* the app's tokens, from the "Crad" look: deep indigo night, white type, one fiery gradient */
+    --bg: #140735; --raised: #210F4B; --line: #2B1A5E; --outline: #56408F;
+    --text: #FFFFFF; --muted: #B7ABDA; --accent: #FC840D; --accent-soft: #210F4B;
+    --fire: linear-gradient(90deg, #7C3AED, #E0245E, #FE4602);
+    --ok: #4CD787; --warn: #FFB547;
+    --display: "Barlow Condensed", var(--sans);
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+    --r: 10px; --control: 36px;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 400 14px/1.5 var(--sans); }
+  body { min-height: 100vh; }
+  canvas.wave { display: block; width: 100%; height: 96px; }
+  main { max-width: 560px; margin: 0 auto; padding: var(--s3) var(--s5) var(--s4); }
+
+  header { display: flex; align-items: center; gap: var(--s3); }
+  header img { width: 44px; height: 44px; border-radius: var(--r); }
+  h1 { margin: 0; font: 600 24px/1.1 var(--display); text-transform: uppercase; letter-spacing: 0.14em; flex: 1; }
+  .status { display: inline-flex; align-items: center; gap: var(--s2); color: var(--ok); font-weight: 500; }
+  .status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+  .sync { margin: var(--s5) 0 var(--s4); padding: var(--s3) var(--s4); background: var(--accent-soft);
+          border-left: 3px solid #E0245E; border-radius: 0 var(--r) var(--r) 0; font-size: 16px; }
+  .sync b { color: #fff; }
+  .sync small { display: block; color: var(--muted); font-size: 14px; }
+  .warn { margin: var(--s4) 0 0; padding: var(--s3) var(--s4); border-left: 3px solid var(--warn);
+          background: var(--raised); border-radius: 0 var(--r) var(--r) 0; }
+  .warn b { color: var(--warn); }
+
+  h2 { margin: var(--s5) 0 var(--s1); font: 600 16px var(--display); color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.1em; }
+  .row { display: grid; grid-template-columns: 80px 1fr auto; align-items: center; gap: var(--s3);
+         min-height: 56px; border-bottom: 1px solid var(--line); }
+  .row:last-of-type { border-bottom: 0; }
+  .label { color: var(--muted); }
+  .value { font: 500 18px/1.3 var(--mono); overflow-wrap: anywhere; }
+  .value.small { font: 400 14px/1.4 var(--sans); color: var(--muted); }
+  .value .alt { display: block; font-size: 13px; color: var(--muted); font-family: var(--sans); }
+
+  button { height: var(--control); min-width: 84px; padding: 0 var(--s4); border-radius: var(--r);
+           border: 1px solid var(--outline); background: transparent; color: var(--text);
+           font: 600 16px var(--display); text-transform: uppercase; letter-spacing: 0.06em; cursor: pointer; }
+  button:hover { background: var(--raised); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.done { color: var(--ok); border-color: var(--ok); }
+  #copy-key { border: 0; background: var(--fire); }
+  #copy-key:hover { filter: brightness(1.1); }
+
+  footer { display: flex; justify-content: space-between; margin-top: var(--s5); padding-top: var(--s3);
+           border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  .error { color: var(--warn); }
+</style>
+</head>
+<body>
+<canvas class="wave" id="wave" aria-hidden="true"></canvas>
+<main>
+  <header>
+    <img src="/icon.svg" alt="">
+    <h1>Issue Mortem Helper</h1>
+    <span class="status" id="status">Running</span>
+  </header>
+
+  <p class="sync"><b>On your tablet or phone: Settings › Sync.</b>
+    <small>It finds this computer over Tailscale. Nothing to do here.</small></p>
+
+  <div id="body"></div>
+
+  <footer><span>Starts by itself at every login</span><span id="version"></span></footer>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function row(label, value, copy, alt) {
+  return `<div class="row"><span class="label">${label}</span>
+    <span class="value">${esc(value)}${alt ? `<span class="alt">${esc(alt)}</span>` : ''}</span>
+    ${copy ? `<button data-copy="${esc(copy)}"${label === 'Key' ? ' id="copy-key"' : ''}>Copy</button>` : '<span></span>'}</div>`;
+}
+
+async function copy(btn) {
+  const text = btn.dataset.copy;
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select();
+    document.execCommand('copy'); t.remove();
+  }
+  btn.textContent = 'Copied'; btn.classList.add('done');
+  setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1500);
+}
+
+async function load() {
+  let i;
+  try {
+    i = await (await fetch('/local/info', { headers: { 'X-Local': '1' } })).json();
+  } catch {
+    $('status').textContent = 'Not running'; $('status').className = 'status error';
+    $('body').innerHTML = '<p class="error">The helper stopped. Open Issue Mortem Helper again to start it.</p>';
+    return;
+  }
+  document.title = 'Issue Mortem Helper · ' + i.name;
+  $('version').textContent = 'Version ' + i.version;
+  let address;
+  if (i.tailscale.length) {
+    address = row('Address', i.tailscale[0], i.tailscale[0], i.tailscale.length > 1 ? 'also ' + i.tailscale.slice(1).join(', ') : '');
+  } else {
+    address = `<p class="warn"><b>Tailscale isn't running on this computer.</b><br>Sync and the app need it. Start
+      Tailscale and sign in${i.other.length ? '; until then this works on the same Wi-Fi only: ' + esc(i.other.join(', ')) : ''}.</p>`;
+  }
+  $('body').innerHTML = `<h2>Or type these in the app (Settings › Add computer)</h2>
+    ${row('Name', i.name, i.name)}${i.tailscale.length ? address : ''}${row('Key', i.key, i.key)}
+    ${i.tailscale.length ? '' : address}
+    <h2>Notes you Send or Save</h2>
+    <div class="row"><span class="label">Folder</span><span class="value small">${esc(i.folder)}</span>
+      <button id="open">Open</button></div>`;
+  document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = () => copy(b));
+  $('open').onclick = () => fetch('/local/open-folder', { method: 'POST', headers: { 'X-Local': '1' } });
+}
+load();
+
+// The wave: solid gradient ribbons rolling like water, the same as the app's (Wave.java). Each ribbon drifts a whole
+// number of turns per LOOP seconds plus a slow sway, so it eases and leans like a tide and repeats without a jump.
+const LOOP = 12;
+const RIBBONS = [
+  [['#1E0B4A', '#2B1468', '#3D286E'], 0.55, 0.55, 0.10, 1, 0.9, 0.0],
+  [['#2B1468', '#4A2A8C', '#5B2A9E'], 0.50, 0.42, 0.12, -1, 1.1, 1.7],
+  [['#3D1A8A', '#7C3AED', '#B02A8F'], 0.42, 0.30, 0.14, 1, 1.3, 3.1],
+  [['#7C3AED', '#E0245E', '#FE4602'], 0.34, 0.22, 0.16, -2, 1.0, 4.4],
+  [['#E0245E', '#FE4602', '#FC840D'], 0.26, 0.12, 0.18, 2, 1.2, 5.9],
+];
+// Curves through the points: each point a control point, joined at the midpoints.
+function smooth(pts) {
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x, y] = pts[i], [nx, ny] = pts[i + 1];
+    g.quadraticCurveTo(x, y, (x + nx) / 2, (y + ny) / 2);
+  }
+  g.lineTo(...pts[pts.length - 1]);
+}
+const edge = (u, h, sit, swell, phase) => {
+  const base = h * (0.05 + (sit + 0.45) * (1 - u ** 1.6) * 0.9);
+  return base + h * swell * (Math.sin(u * 6.5 + phase) * 0.6 + Math.sin(u * 2.3 - phase) * 0.4);
+};
+const wave = $('wave'), g = wave.getContext('2d');
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function frame(ms) {
+  const dpr = devicePixelRatio || 1, w = wave.clientWidth, h = wave.clientHeight;
+  if (wave.width !== Math.round(w * dpr)) { wave.width = Math.round(w * dpr); wave.height = Math.round(h * dpr); }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const a = 2 * Math.PI * ((ms / 1000) % LOOP) / LOOP;
+  for (const [colors, sit, thick, swell, turns, sway, ph] of RIBBONS) {
+    const phase = turns * a + sway * Math.sin(a + ph) + ph;
+    const grad = g.createLinearGradient(0, 0, w, 0);
+    colors.forEach((c, i) => grad.addColorStop(i / (colors.length - 1), c));
+    g.fillStyle = grad;
+    const xs = [];
+    for (let x = 0; x < w; x += 12) xs.push(x);
+    xs.push(w);
+    const upper = xs.map((x) => [x, edge(x / w, h, sit, swell, phase)]);
+    const lower = upper.map(([x, y]) => [x, y + h * thick * (0.6 + 0.4 * Math.sin((x / w) * 5 - phase * 2))]).reverse();
+    g.beginPath();
+    g.moveTo(...upper[0]);
+    smooth(upper);
+    g.lineTo(...lower[0]);
+    smooth(lower);
+    g.closePath();
+    g.fill();
+  }
+  if (!still) requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

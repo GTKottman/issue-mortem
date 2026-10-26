@@ -53,8 +53,8 @@ import java.util.concurrent.Executors;
 
 /**
  * Opening the app captures the screen of the chosen computer (the Issue Mortem helper, GET /api/screen); Back goes to
- * the start page with Blank page, History and Settings. Draw on it with the pen, write a note, then:
- * Issue makes a GitHub issue from the picture, note and markers; Send puts the picture and note in the computer's
+ * the start page with Blank page, History and Settings. Draw on it, and write what's wrong into numbered markers, then:
+ * Issue makes a GitHub issue from the picture and the markers; Send puts the picture and markers in the computer's
  * "AI Inbox" folder; Save puts them in "Saved Notes". All three also save to Download/Issue Mortem here and keep an
  * editable copy in History.
  */
@@ -62,9 +62,11 @@ public class MainActivity extends Activity {
     static final String INBOX = "/AI Inbox/";
     static final String SAVED = "/Saved Notes/";
 
-    // Design tokens: one dark surface family, one accent (active tools, Send, Capture).
-    static final int BG = 0xFF16141A, CANVAS = 0xFF0E0C12, RAISED = 0xFF1F1C25, LINE = 0xFF2A2633, OUTLINE = 0xFF3A3546;
-    static final int TEXT = 0xFFEEEAF4, MUTED = 0xFFA39EB2, ACCENT = 0xFF8B66FF, ACTIVE_BG = 0xFF2A2440;
+    // Design tokens, from the "Crad" look: one deep indigo night family, white type in a condensed uppercase face for
+    // titles and buttons, one fiery gradient (Wave.FIRE) for the main button and the wave, orange for active tools.
+    static final int BG = 0xFF140735, CANVAS = 0xFF0D0424, RAISED = 0xFF210F4B, LINE = 0xFF2B1A5E, OUTLINE = 0xFF56408F;
+    static final int TEXT = 0xFFFFFFFF, MUTED = 0xFFB7ABDA, ACCENT = 0xFFFC840D, ACTIVE_BG = 0xFF2E1766;
+    static final int ONLINE = 0xFF4CD787;
     static final int[] COLORS = {
             Color.rgb(255, 59, 78), Color.rgb(255, 214, 10), Color.rgb(48, 209, 88),
             Color.rgb(10, 132, 255), Color.WHITE, Color.BLACK};
@@ -79,13 +81,22 @@ public class MainActivity extends Activity {
     private Prefs prefs;
     private TextView status;
     private DrawView draw;
-    private EditText note;
+    /** A note written before notes moved into the markers (History); kept and still sent, but no longer edited. */
+    private String legacyNote = "";
     private TextView send, save, issue;
     private boolean drawing, busy, onHistory, onSettings;
 
     // toolbar state
-    private Tool undo, redo, tool, colorBtn, gridBtn;
-    private TextView zoomLabel;
+    // drawing page (layout D): tool orb + arc on the left, undo/redo/more top left, the dock at the bottom
+    private Tool undo, redo;
+    private ImageView orbIcon;
+    private GradientDrawable orbRing;
+    private FrameLayout arc;
+    private final List<Tool> arcTools = new ArrayList<>();
+    private final List<View> arcColors = new ArrayList<>();
+    private Boolean arcOpen; // starts open on a tablet, folded on a phone, where it would cover the picture
+    private boolean dockOpen = true;
+    private View dock, dockTab, cropBar;
     private int color = COLORS[0], grid = 0;
     private boolean gridDots;
 
@@ -168,6 +179,13 @@ public class MainActivity extends Activity {
         onSettings = false;
         LinearLayout page = column();
         page.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams markParams = new LinearLayout.LayoutParams(dp(96), dp(96));
+        markParams.bottomMargin = dp(24);
+        page.addView(logo(96), markParams);
+        TextView word = title("Issue Mortem", 40, 0.3f);
+        LinearLayout.LayoutParams wp = wrap();
+        wp.bottomMargin = dp(32);
+        page.addView(word, wp);
         TextView capture = pill("Capture screen", true, v -> capture());
         capture.setTextSize(24);
         capture.setPadding(dp(48), dp(20), dp(48), dp(20));
@@ -203,7 +221,10 @@ public class MainActivity extends Activity {
         status.setGravity(Gravity.CENTER);
         status.setPadding(dp(24), dp(24), dp(24), 0);
         page.addView(status);
-        setPage(page);
+        LinearLayout outer = column();
+        outer.addView(page, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        outer.addView(new Wave(this), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(160)));
+        setPage(outer);
     }
 
     private void blankPage() {
@@ -223,7 +244,7 @@ public class MainActivity extends Activity {
         bar.setPadding(dp(12), dp(8), dp(12), dp(8));
         bar.setBackgroundColor(BG);
         bar.addView(new Tool(R.drawable.ic_back, null, v -> showStart(null)));
-        TextView title = text("History", TEXT, 20);
+        TextView title = title("History", 26, 0.12f);
         title.setPadding(dp(8), 0, 0, 0);
         bar.addView(title);
         page.addView(bar);
@@ -282,6 +303,12 @@ public class MainActivity extends Activity {
         when.setPadding(dp(4), dp(10), dp(4), 0);
         card.addView(when);
         String first = e.note().trim();
+        if (first.isEmpty()) {
+            try {
+                first = firstMarkerNote(e.ink());
+            } catch (Exception ignored) {
+            }
+        }
         int nl = first.indexOf('\n');
         if (nl >= 0) first = first.substring(0, nl);
         TextView snippet = text(first.isEmpty() ? "No note" : first, MUTED, 14);
@@ -308,6 +335,19 @@ public class MainActivity extends Activity {
         return card;
     }
 
+    /** The first marker note in saved ink, for History's cards. */
+    private static String firstMarkerNote(String ink) {
+        try {
+            org.json.JSONArray a = new org.json.JSONArray(ink);
+            for (int i = 0; i < a.length(); i++) {
+                org.json.JSONObject o = a.getJSONObject(i);
+                if (o.optInt("tool") == DrawView.MARKER && !o.optString("text").trim().isEmpty()) return o.optString("text").trim();
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
     // ---- drawing page
 
     private void showDraw(Bitmap shot, String ink, String noteText) {
@@ -332,52 +372,6 @@ public class MainActivity extends Activity {
             ((ViewGroup) draw.getParent()).removeView(draw);
         }
 
-        LinearLayout bar = new LinearLayout(this);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(12), dp(8), dp(12), dp(8));
-        bar.setBackgroundColor(BG);
-
-        bar.addView(new Tool(R.drawable.ic_retake, "Retake", v -> capture()));
-        bar.addView(divider());
-        undo = new Tool(R.drawable.ic_undo, null, v -> draw.undo());
-        redo = new Tool(R.drawable.ic_redo, null, v -> draw.redo());
-        bar.addView(undo);
-        bar.addView(redo, spaced(4));
-        bar.addView(divider());
-        tool = new Tool(R.drawable.ic_pen, "Pen", v -> toolMenu(v));
-        tool.chevron();
-        bar.addView(tool);
-        colorBtn = new Tool(0, null, v -> colorMenu(v));
-        colorBtn.chevron();
-        bar.addView(colorBtn, spaced(4));
-        gridBtn = new Tool(R.drawable.ic_grid, "Grid", v -> gridMenu(v));
-        gridBtn.chevron();
-        bar.addView(gridBtn, spaced(4));
-
-        bar.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-
-        LinearLayout zoom = new LinearLayout(this);
-        zoom.setGravity(Gravity.CENTER_VERTICAL);
-        zoom.setBackground(outline());
-        zoom.addView(new Tool(R.drawable.ic_minus, null, v -> draw.zoomBy(1 / 1.5f)));
-        zoomLabel = text("", TEXT, 15);
-        zoomLabel.setGravity(Gravity.CENTER);
-        zoomLabel.setFontFeatureSettings("tnum");
-        zoom.addView(zoomLabel, new LinearLayout.LayoutParams(dp(64), dp(44)));
-        zoom.addView(new Tool(R.drawable.ic_plus, null, v -> draw.zoomBy(1.5f)));
-        bar.addView(zoom);
-        bar.addView(new Tool(R.drawable.ic_fit, "Fit", v -> draw.fit()), spaced(8));
-        bar.addView(divider());
-        bar.addView(new Tool(R.drawable.ic_trash, "Clear", v -> draw.clear()));
-        // Phones: the toolbar scrolls sideways instead of cutting off zoom and Clear.
-        HorizontalScrollView barScroll = new HorizontalScrollView(this);
-        barScroll.setFillViewport(true);
-        barScroll.setHorizontalScrollBarEnabled(false);
-        barScroll.setBackgroundColor(BG);
-        barScroll.addView(bar);
-        page.addView(barScroll);
-        page.addView(rule());
-
         draw.setShot(shot);
         if (ink != null) {
             try {
@@ -386,49 +380,165 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Couldn't load the ink: " + e.getMessage(), Toast.LENGTH_LONG).show();
             }
         }
-        page.addView(draw, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        legacyNote = noteText == null ? "" : noteText;
 
-        page.addView(rule());
-        // Wide screens: note and buttons on one row. Phones: the note gets its own row above the buttons.
-        boolean narrow = getResources().getConfiguration().screenWidthDp < 840;
-        LinearLayout bottom = narrow ? column() : new LinearLayout(this);
-        bottom.setGravity(Gravity.CENTER_VERTICAL);
-        bottom.setPadding(dp(16), dp(8), dp(12), dp(8));
-        bottom.setBackgroundColor(BG);
-        note = new EditText(this);
-        note.setHint("What's wrong, and what should happen instead?");
-        note.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        note.setMinLines(2);
-        note.setMaxLines(6);
-        note.setTextSize(18);
-        note.setTextColor(TEXT);
-        note.setHintTextColor(MUTED);
-        note.setText(noteText);
-        LinearLayout actions = narrow ? new LinearLayout(this) : bottom;
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        if (narrow) {
-            bottom.addView(note, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            bottom.addView(actions, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        } else {
-            bottom.addView(note, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        // The picture fills the page; everything else floats over it and folds away.
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(draw, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        page.addView(frame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        boolean phone = getResources().getConfiguration().screenWidthDp < 600;
+        if (arcOpen == null) arcOpen = !phone;
+
+        // Tools: an arc of tools and colours around the orb. The orb shows the tool and colour; tapping it folds the arc.
+        arc = new FrameLayout(this);
+        arcTools.clear();
+        arcColors.clear();
+        int toolR = phone ? 96 : 118, colorR = phone ? 160 : 196, cy = colorR + 24;
+        for (int i = 0; i < TOOL_NAMES.length; i++) {
+            int pick = i;
+            Tool t = round(TOOL_ICONS[i], v -> {
+                if (draw.getTool() == pick) toolMenu(v); // the current tool again: its size and pen pressure
+                else draw.setTool(pick);
+                refreshBar();
+            });
+            t.setContentDescription(TOOL_NAMES[i]);
+            double a = Math.toRadians(-75 + i * 30);
+            arc.addView(t, at(36 + toolR * Math.cos(a), cy + toolR * Math.sin(a), 54));
+            arcTools.add(t);
         }
-        status = text("", MUTED, 14);
-        status.setMaxWidth(dp(360));
-        status.setPadding(narrow ? 0 : dp(16), 0, dp(8), 0);
-        if (narrow) {
-            status.setMaxWidth(Integer.MAX_VALUE);
-            bottom.addView(status, 1);
-            actions.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-        } else {
-            actions.addView(status);
+        for (int i = 0; i < COLORS.length; i++) {
+            int c = COLORS[i];
+            View sw = new View(this);
+            sw.setContentDescription("Colour " + (i + 1));
+            sw.setOnClickListener(v -> {
+                color = c;
+                draw.setColor(c); // switches back to the pen from the eraser or lasso
+                refreshBar();
+            });
+            double a = Math.toRadians(-62 + i * 24.8);
+            arc.addView(sw, at(36 + colorR * Math.cos(a), cy + colorR * Math.sin(a), 32));
+            arcColors.add(sw);
         }
-        save = pill("Save", false, v -> finish(SAVED, "Saved"));
-        actions.addView(save, spaced(8));
-        send = pill("Send", false, v -> finish(INBOX, "Sent"));
-        actions.addView(send, spaced(12));
+        FrameLayout.LayoutParams arcParams = new FrameLayout.LayoutParams(dp(colorR + 72), dp(2 * cy), Gravity.START | Gravity.CENTER_VERTICAL);
+        arcParams.leftMargin = dp(20);
+        frame.addView(arc, arcParams);
+        arc.setVisibility(arcOpen ? View.VISIBLE : View.GONE);
+
+        FrameLayout orb = new FrameLayout(this);
+        orb.setBackground(glass(0));
+        orb.setContentDescription("Tools");
+        View ring = new View(this);
+        orbRing = new GradientDrawable();
+        orbRing.setShape(GradientDrawable.OVAL);
+        ring.setBackground(orbRing);
+        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        rp.setMargins(dp(6), dp(6), dp(6), dp(6));
+        orb.addView(ring, rp);
+        orbIcon = new ImageView(this);
+        orbIcon.setColorFilter(TEXT);
+        orb.addView(orbIcon, new FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER));
+        orb.setOnClickListener(v -> {
+            arcOpen = !arcOpen;
+            arc.setVisibility(arcOpen ? View.VISIBLE : View.GONE);
+        });
+        FrameLayout.LayoutParams op = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.START | Gravity.CENTER_VERTICAL);
+        op.leftMargin = dp(20);
+        frame.addView(orb, op);
+
+        // Undo, redo and More (Retake, Crop, Grid, Fit, Clear), top left.
+        LinearLayout corner = new LinearLayout(this);
+        undo = round(R.drawable.ic_undo, v -> draw.undo());
+        redo = round(R.drawable.ic_redo, v -> draw.redo());
+        undo.setContentDescription("Undo");
+        redo.setContentDescription("Redo");
+        Tool more = round(R.drawable.ic_more, v -> moreMenu(v));
+        more.setContentDescription("More");
+        corner.addView(undo, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        corner.addView(redo, spacedBox(10));
+        corner.addView(more, spacedBox(10));
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
+        cp.setMargins(dp(16), dp(16), 0, 0);
+        frame.addView(corner, cp);
+
+        // What's happening (capturing, sending, errors), top centre, only while there's something to say.
+        status = text("", TEXT, 15);
+        status.setBackground(glass(12));
+        status.setPadding(dp(16), dp(10), dp(16), dp(10));
+        status.setMaxWidth(dp(560));
+        status.setVisibility(View.GONE);
+        status.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence c, int a, int b, int n) {
+            }
+
+            public void onTextChanged(CharSequence c, int a, int b, int n) {
+            }
+
+            public void afterTextChanged(android.text.Editable e) {
+                status.setVisibility(e.length() == 0 ? View.GONE : View.VISIBLE);
+            }
+        });
+        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        sp.topMargin = dp(16);
+        frame.addView(status, sp);
+
+        // The dock: Save, Send, Issue. Its chevron folds it down to a small tab.
+        LinearLayout dock = new LinearLayout(this);
+        this.dock = dock;
+        dock.setGravity(Gravity.CENTER_VERTICAL);
+        dock.setBackground(glass(20));
+        dock.setPadding(dp(8), dp(8), dp(4), dp(8));
+        save = pill(R.drawable.ic_save, "Save", false, v -> finish(SAVED, "Saved"));
+        send = pill(R.drawable.ic_send, "Send", false, v -> finish(INBOX, "Sent"));
         issue = pill("Issue", true, v -> issueDialog());
-        actions.addView(issue, spaced(12));
-        page.addView(bottom);
+        dock.addView(save);
+        dock.addView(send, spaced(phone ? 6 : 10));
+        dock.addView(issue, spaced(phone ? 6 : 10));
+        ImageView fold = new ImageView(this);
+        fold.setImageResource(R.drawable.ic_chevron);
+        fold.setColorFilter(MUTED);
+        fold.setPadding(dp(10), dp(10), dp(10), dp(10));
+        fold.setContentDescription("Hide the buttons");
+        dock.addView(fold, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        FrameLayout.LayoutParams dockParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        dockParams.bottomMargin = dp(20);
+        frame.addView(dock, dockParams);
+        ImageView tab = new ImageView(this);
+        dockTab = tab;
+        tab.setImageResource(R.drawable.ic_chevron);
+        tab.setRotation(180);
+        tab.setColorFilter(TEXT);
+        tab.setPadding(dp(30), dp(4), dp(30), dp(4));
+        GradientDrawable tabBg = glass(14);
+        tabBg.setCornerRadii(new float[] {dp(14), dp(14), dp(14), dp(14), 0, 0, 0, 0});
+        tab.setBackground(tabBg);
+        tab.setContentDescription("Show the buttons");
+        frame.addView(tab, new FrameLayout.LayoutParams(dp(88), dp(32), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL));
+        Runnable showDock = () -> {
+            dock.setVisibility(dockOpen ? View.VISIBLE : View.GONE);
+            tab.setVisibility(dockOpen ? View.GONE : View.VISIBLE);
+        };
+        fold.setOnClickListener(v -> { dockOpen = false; showDock.run(); });
+        tab.setOnClickListener(v -> { dockOpen = true; showDock.run(); });
+        showDock.run();
+
+        // Cropping: Cancel, Whole picture and Done take the dock's place.
+        LinearLayout crops = new LinearLayout(this);
+        crops.setGravity(Gravity.CENTER_VERTICAL);
+        crops.setBackground(glass(20));
+        crops.setPadding(dp(8), dp(8), dp(8), dp(8));
+        crops.addView(pill("Cancel", false, v -> endCrop(false)));
+        crops.addView(pill("Whole", false, v -> draw.resetCrop()), spaced(phone ? 6 : 10));
+        crops.addView(pill("Done", true, v -> endCrop(true)), spaced(phone ? 6 : 10));
+        FrameLayout.LayoutParams cropParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        cropParams.bottomMargin = dp(20);
+        frame.addView(crops, cropParams);
+        cropBar = crops;
+        crops.setVisibility(draw.isCropping() ? View.VISIBLE : View.GONE);
+        if (draw.isCropping()) {
+            dock.setVisibility(View.GONE);
+            tab.setVisibility(View.GONE);
+        }
+
         drawPage = page;
         setPage(page);
         refreshBar();
@@ -441,7 +551,8 @@ public class MainActivity extends Activity {
 
     /** Drawing, History or Settings: back to the start page. Start page: leave the app. */
     private void back() {
-        if (onSettings && settingsFrom != null) {
+        if (drawing && !onSettings && draw.isCropping()) endCrop(false);
+        else if (onSettings && settingsFrom != null) {
             onSettings = false;
             drawing = true;
             setPage(settingsFrom);
@@ -451,37 +562,164 @@ public class MainActivity extends Activity {
         else finish();
     }
 
-    /** Undo/redo availability, zoom %, current tool, colour and grid. */
+    /** Undo/redo availability, and the current tool and colour on the orb and in the arc. */
     private void refreshBar() {
         if (undo == null || !drawing) return;
         undo.setEnabled(draw.canUndo());
         redo.setEnabled(draw.canRedo());
-        zoomLabel.setText(draw.zoomPercent() + "%");
-        tool.set(TOOL_ICONS[draw.getTool()], TOOL_NAMES[draw.getTool()]);
-        colorBtn.dot(color);
-        gridBtn.setActive(grid > 0);
+        int t = draw.getTool();
+        orbIcon.setImageResource(TOOL_ICONS[t]);
+        orbRing.setStroke(dp(3), color);
+        for (int i = 0; i < arcTools.size(); i++) arcTools.get(i).setActive(i == t);
+        for (int i = 0; i < arcColors.size(); i++) {
+            GradientDrawable d = new GradientDrawable();
+            d.setShape(GradientDrawable.OVAL);
+            d.setColor(COLORS[i]);
+            d.setStroke(dp(COLORS[i] == color ? 3 : 2), COLORS[i] == color ? ACCENT : 0x99140735);
+            arcColors.get(i).setBackground(d);
+        }
     }
 
+    /** A round, see-through button for the drawing page. */
+    private Tool round(int iconRes, View.OnClickListener click) {
+        Tool t = new Tool(iconRes, null, click);
+        t.setPadding(0, 0, 0, 0);
+        t.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), glass(0), null));
+        return t;
+    }
+
+    /** See-through panel colour for things floating over the picture; radius 0 means a circle. */
+    private GradientDrawable glass(int radiusDp) {
+        GradientDrawable d = new GradientDrawable();
+        if (radiusDp == 0) d.setShape(GradientDrawable.OVAL);
+        else d.setCornerRadius(dp(radiusDp));
+        d.setColor(0x99140735);
+        d.setStroke(dp(1), 0x33FFFFFF);
+        return d;
+    }
+
+    /** Places a square child of sizeDp centred on (x, y) dp inside a FrameLayout. */
+    private FrameLayout.LayoutParams at(double x, double y, int sizeDp) {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(sizeDp), dp(sizeDp));
+        lp.leftMargin = dp((int) Math.round(x - sizeDp / 2.0));
+        lp.topMargin = dp((int) Math.round(y - sizeDp / 2.0));
+        return lp;
+    }
+
+    private LinearLayout.LayoutParams spacedBox(int leftDp) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
+        lp.leftMargin = dp(leftDp);
+        return lp;
+    }
+
+    /** Crop: the box shows over the picture and Cancel / Whole / Done replace the dock until one is tapped. */
+    private void startCrop() {
+        draw.startCrop();
+        dock.setVisibility(View.GONE);
+        dockTab.setVisibility(View.GONE);
+        cropBar.setVisibility(View.VISIBLE);
+        status.setText("Drag the corners or edges, or draw a new box. Issue, Send and Save use only what's inside.");
+    }
+
+    private void endCrop(boolean keep) {
+        draw.endCrop(keep);
+        cropBar.setVisibility(View.GONE);
+        dock.setVisibility(dockOpen ? View.VISIBLE : View.GONE);
+        dockTab.setVisibility(dockOpen ? View.GONE : View.VISIBLE);
+        status.setText("");
+    }
+
+    /** More: Retake, Crop, Grid, Fit and Clear. */
+    private void moreMenu(View anchor) {
+        LinearLayout m = column();
+        PopupWindow[] w = new PopupWindow[1];
+        Row retake = new Row(R.drawable.ic_retake, "Retake");
+        Row cropRow = new Row(R.drawable.ic_crop, "Crop");
+        cropRow.setActive(draw.isCropped());
+        Row gridRow = new Row(R.drawable.ic_grid, "Grid");
+        gridRow.setActive(grid > 0);
+        Row fitRow = new Row(R.drawable.ic_fit, "Fit");
+        Row clear = new Row(R.drawable.ic_trash, "Clear");
+        retake.setOnClickListener(v -> { w[0].dismiss(); capture(); });
+        cropRow.setOnClickListener(v -> { w[0].dismiss(); startCrop(); });
+        gridRow.setOnClickListener(v -> { w[0].dismiss(); gridMenu(anchor); });
+        fitRow.setOnClickListener(v -> { w[0].dismiss(); draw.fit(); });
+        clear.setOnClickListener(v -> { w[0].dismiss(); draw.clear(); });
+        m.addView(retake);
+        m.addView(cropRow);
+        m.addView(gridRow);
+        m.addView(fitRow);
+        m.addView(rule(), ruleParams());
+        m.addView(clear);
+        w[0] = menu(anchor, m, 220);
+    }
+
+    /** A marker's note, written in a card right beside it. Its text is the issue. */
     private void markerDialog(DrawView.Marker m, boolean isNew) {
+        float[] view = draw.getView();
+        LinearLayout card = column();
+        card.setBackground(glass(14));
+        ((GradientDrawable) card.getBackground()).setColor(0xF2140735);
+        card.setPadding(dp(14), dp(10), dp(10), dp(8));
         EditText t = new EditText(this);
         t.setText(m.getText());
-        t.setHint("What about this spot?");
+        t.setHint("What's wrong here, and what should happen?");
         t.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         t.setMinLines(2);
-        t.setTextSize(18);
-        FrameLayout wrapView = new FrameLayout(this);
-        wrapView.setPadding(dp(24), dp(8), dp(24), 0);
-        wrapView.addView(t);
-        AlertDialog.Builder b = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Marker " + m.number)
-                .setView(wrapView)
-                .setPositiveButton("Done", (d, w) -> m.setText(t.getText().toString().trim()))
-                .setNegativeButton(isNew ? "Remove marker" : "Delete marker", (d, w) -> draw.removeMarker(m));
-        if (!isNew) b.setNeutralButton("Cancel", null);
-        AlertDialog d = b.create();
-        d.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
-        d.show();
+        t.setMaxLines(6);
+        t.setTextSize(17);
+        t.setTextColor(TEXT);
+        t.setHintTextColor(MUTED);
+        t.setBackground(null);
+        card.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        TextView del = text("DELETE", MUTED, 16);
+        del.setTypeface(display());
+        del.setLetterSpacing(0.06f);
+        del.setPadding(dp(12), dp(8), dp(12), dp(8));
+        TextView done = text("DONE", TEXT, 16);
+        done.setTypeface(display());
+        done.setLetterSpacing(0.06f);
+        done.setPadding(dp(14), dp(8), dp(14), dp(8));
+        done.setBackground(rounded(0x22FFFFFF, 9));
+        row.addView(del);
+        row.addView(done, spaced(6));
+        card.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        int w = Math.min(dp(320), getResources().getDisplayMetrics().widthPixels - dp(32));
+        PopupWindow pop = new PopupWindow(card, w, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        pop.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        pop.setElevation(dp(12));
+        pop.setInputMethodMode(PopupWindow.INPUT_METHOD_NEEDED);
+        pop.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        boolean[] deleted = {false};
+        pop.setOnDismissListener(() -> {
+            if (!deleted[0]) m.setText(t.getText().toString().trim());
+            draw.setEditing(null);
+            draw.setView(view);
+            refreshBar();
+        });
+        del.setOnClickListener(v -> { deleted[0] = true; pop.dismiss(); draw.removeMarker(m); });
+        done.setOnClickListener(v -> pop.dismiss());
+
+        // The keyboard covers the lower half: a low marker slides up first, so it and its card stay in sight, and
+        // the picture slides back when the note closes.
+        if (draw.screenOf(m)[1] > draw.getHeight() * 0.3f) draw.slideTo(m, draw.getHeight() * 0.2f);
+        // Beside the marker: to its right, or to its left near the right edge; kept on screen.
+        float[] p = draw.screenOf(m);
+        int[] loc = new int[2];
+        draw.getLocationInWindow(loc);
+        int x = Math.round(p[0] + p[2] + dp(8)), y = Math.max(dp(8), Math.round(p[1] - dp(22)));
+        if (x + w > draw.getWidth() - dp(8)) x = Math.round(p[0] - p[2] - dp(8) - w);
+        if (x < dp(8)) { // no room either side (a phone): just below the marker
+            x = Math.max(dp(8), Math.min(draw.getWidth() - w - dp(8), Math.round(p[0] - w / 2f)));
+            y = Math.round(p[1] + p[2] + dp(8));
+        }
+        draw.setEditing(m);
+        pop.showAtLocation(draw, Gravity.NO_GRAVITY, loc[0] + x, loc[1] + y);
         t.requestFocus();
+        t.setSelection(t.getText().length());
     }
 
     // ---- menus
@@ -538,7 +776,7 @@ public class MainActivity extends Activity {
         Switch sw = new Switch(this);
         sw.setChecked(draw.getPressure());
         sw.setThumbTintList(new ColorStateList(new int[][] {{android.R.attr.state_checked}, {}}, new int[] {ACCENT, MUTED}));
-        sw.setTrackTintList(new ColorStateList(new int[][] {{android.R.attr.state_checked}, {}}, new int[] {0x808B66FF, OUTLINE}));
+        sw.setTrackTintList(new ColorStateList(new int[][] {{android.R.attr.state_checked}, {}}, new int[] {0x80FC840D, OUTLINE}));
         sw.setOnCheckedChangeListener((b, on) -> draw.setPressure(on));
         pressure.addView(sw);
         brush.addView(pressure);
@@ -673,7 +911,7 @@ public class MainActivity extends Activity {
     /** Everything a finished note is made of, read off the screen on the UI thread. */
     private final class Note {
         final Bitmap picture = draw.render(), shot = draw.getShot();
-        final String text = note.getText().toString().trim();
+        final String text = legacyNote.trim();
         final StringBuilder markers = new StringBuilder();
         final String ink, name, when;
 
@@ -700,7 +938,7 @@ public class MainActivity extends Activity {
         }
 
         byte[] md() {
-            return ("# Note, " + when + "\n\n" + (text.isEmpty() ? "(no note)" : text) + "\n\n"
+            return ("# Note, " + when + "\n\n" + (text.isEmpty() ? "" : text + "\n\n")
                     + (markers.length() > 0 ? "## Markers\n\n" + markers + "\n" : "")
                     + "![Screen](<" + name + ".png>)\n").getBytes(StandardCharsets.UTF_8);
         }
@@ -766,6 +1004,15 @@ public class MainActivity extends Activity {
     // ---- GitHub issue
 
     private void issueDialog() {
+        String first = "";
+        for (DrawView.Marker m : draw.markers()) {
+            if (!m.getText().trim().isEmpty()) { first = m.getText().trim(); break; }
+        }
+        if (first.isEmpty()) first = legacyNote.trim();
+        if (first.isEmpty()) {
+            status.setText("Add a marker and write in it: the issue is made from the markers.");
+            return;
+        }
         if (prefs.token().isEmpty()) {
             showSettings("Add a GitHub token to make issues.");
             return;
@@ -790,7 +1037,6 @@ public class MainActivity extends Activity {
         title.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         title.setTextSize(18);
         title.setTextColor(TEXT);
-        String first = note.getText().toString().trim();
         if (first.contains("\n")) first = first.substring(0, first.indexOf('\n'));
         if (first.length() > 80) first = first.substring(0, 80).trim() + "…";
         title.setText(first);
@@ -806,7 +1052,7 @@ public class MainActivity extends Activity {
         form.addView(labelScroll);
         List<String> picked = new ArrayList<>();
 
-        TextView about = text("The description is your note, the numbered markers and the picture.", MUTED, 14);
+        TextView about = text("The description is the numbered markers and the picture. The title starts as the first marker's note.", MUTED, 14);
         about.setPadding(0, dp(16), 0, 0);
         form.addView(about);
 
@@ -986,9 +1232,10 @@ public class MainActivity extends Activity {
         bar.setPadding(dp(12), dp(8), dp(12), dp(8));
         bar.setBackgroundColor(BG);
         bar.addView(new Tool(R.drawable.ic_back, null, v -> back()));
-        TextView title = text("Settings", TEXT, 20);
-        title.setPadding(dp(8), 0, 0, 0);
+        TextView title = title("Settings", 26, 0.12f);
+        title.setPadding(dp(8), 0, dp(24), 0);
         bar.addView(title);
+        bar.addView(new Wave(this), new LinearLayout.LayoutParams(0, dp(56), 1));
         page.addView(bar);
         page.addView(rule());
 
@@ -1000,8 +1247,8 @@ public class MainActivity extends Activity {
             body.addView(m);
         }
 
-        body.addView(text("Computers", TEXT, 20));
-        TextView help = text("Each computer runs the Issue Mortem helper. Its window shows the address and key to type here.", MUTED, 15);
+        body.addView(section("Computers"));
+        TextView help = text("Each computer runs the Issue Mortem helper. Sync finds them over Tailscale, or type the address and key its window shows.", MUTED, 15);
         help.setPadding(0, dp(4), 0, dp(12));
         body.addView(help);
         List<Prefs.Computer> computers = prefs.computers();
@@ -1011,24 +1258,38 @@ public class MainActivity extends Activity {
             LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(0, dp(4), 0, dp(4));
+            row.setMinimumHeight(dp(72));
+            ImageView screen = new ImageView(this);
+            screen.setImageResource(R.drawable.ic_monitor);
+            screen.setColorFilter(MUTED);
+            row.addView(screen, new LinearLayout.LayoutParams(dp(28), dp(28)));
             LinearLayout names = column();
+            names.setPadding(dp(16), 0, dp(12), 0);
             names.addView(text(c.name, TEXT, 17));
             TextView result = text(c.address, MUTED, 14);
             names.addView(result);
             row.addView(names, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            TextView online = text("Checking…", MUTED, 14);
+            online.setPadding(0, 0, dp(16), 0);
+            row.addView(online);
+            checkOnline(c, online);
             row.addView(pill("Test", false, v -> testComputer(c, result)));
             row.addView(pill("Edit", false, v -> computerDialog(at)), spaced(8));
             body.addView(row);
+            if (i < computers.size() - 1) body.addView(rule(), ruleParams());
         }
-        LinearLayout.LayoutParams ap = wrap();
-        ap.topMargin = dp(8);
-        body.addView(pill("Add computer", computers.isEmpty(), v -> computerDialog(-1)), ap);
+        LinearLayout addRow = new LinearLayout(this);
+        addRow.setPadding(0, dp(8), 0, 0);
+        addRow.setPadding(0, dp(16), 0, 0);
+        addRow.addView(pill(R.drawable.ic_sync, "Sync", true, v -> syncDialog()));
+        addRow.addView(pill("Add computer", false, v -> computerDialog(-1)), spaced(12));
+        body.addView(addRow);
 
         View gap = rule();
         body.addView(gap, ruleParams());
         ((LinearLayout.LayoutParams) gap.getLayoutParams()).setMargins(0, dp(28), 0, dp(24));
 
-        body.addView(text("GitHub", TEXT, 20));
+        body.addView(section("GitHub"));
         TextView ghHelp = text("A fine-grained token with Contents and Issues set to Read and write, for the repos you want issues in.", MUTED, 15);
         ghHelp.setPadding(0, dp(4), 0, dp(12));
         body.addView(ghHelp);
@@ -1043,7 +1304,7 @@ public class MainActivity extends Activity {
         LinearLayout ghRow = new LinearLayout(this);
         ghRow.setGravity(Gravity.CENTER_VERTICAL);
         ghRow.setPadding(0, dp(8), 0, 0);
-        ghRow.addView(pill("Save and check", true, v -> {
+        ghRow.addView(pill("Save and check", false, v -> {
             prefs.setToken(token.getText().toString());
             ghResult.setText("Checking…");
             String t = prefs.token();
@@ -1070,6 +1331,37 @@ public class MainActivity extends Activity {
         setPage(page);
     }
 
+    /** Accent-tinted section title with a rule under it. */
+    private View section(String title) {
+        LinearLayout s = column();
+        TextView t = title(title, 20, 0.1f);
+        s.addView(t);
+        View r = rule();
+        s.addView(r, ruleParams());
+        ((LinearLayout.LayoutParams) r.getLayoutParams()).setMargins(0, dp(8), 0, 0);
+        return s;
+    }
+
+    /** Online (green dot), Wrong key or Offline next to a computer in Settings. */
+    private void checkOnline(Prefs.Computer c, TextView label) {
+        new Thread(() -> {
+            int code;
+            try {
+                HttpURLConnection h = open(c, "/api/hello", "GET");
+                h.setConnectTimeout(4000);
+                code = h.getResponseCode();
+                h.disconnect();
+            } catch (Exception e) {
+                code = 0;
+            }
+            int got = code;
+            runOnUiThread(() -> {
+                label.setText(got == 200 ? "●  Online" : got == 401 ? "✕  Wrong key" : "○  Offline");
+                label.setTextColor(got == 200 ? ONLINE : got == 401 ? ACCENT : MUTED);
+            });
+        }).start();
+    }
+
     private void testComputer(Prefs.Computer c, TextView result) {
         result.setText("Testing…");
         io.execute(() -> {
@@ -1083,6 +1375,63 @@ public class MainActivity extends Activity {
             String shown = msg;
             runOnUiThread(() -> result.setText(shown));
         });
+    }
+
+    /** Sync: listen for a minute while the helpers on the person's computers offer themselves over Tailscale. */
+    private void syncDialog() {
+        TextView log = text("Looking for computers on your Tailscale…\n\nEach one needs the Issue Mortem helper "
+                + "running and Tailscale on. Nothing to do on the computer.", TEXT, 16);
+        log.setPadding(dp(24), dp(16), dp(24), dp(8));
+        Sync sync = new Sync();
+        int[] found = {0};
+        AlertDialog d = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Sync")
+                .setView(log)
+                .setNegativeButton("Done", null)
+                .create();
+        d.setOnDismissListener(x -> {
+            sync.stop();
+            showSettings(null);
+        });
+        d.show();
+        d.getWindow().setBackgroundDrawable(rounded(RAISED, 16));
+        sync.start(new Sync.Listener() {
+            @Override
+            public void found(Prefs.Computer c) {
+                runOnUiThread(() -> {
+                    found[0]++;
+                    boolean added = keepComputer(c);
+                    log.append("\n\n" + (added ? "Added " : "Updated ") + c.name + " (" + c.address + ")");
+                });
+            }
+
+            @Override
+            public void done(String error) {
+                runOnUiThread(() -> {
+                    if (error != null) log.append("\n\n" + error);
+                    else if (found[0] == 0)
+                        log.append("\n\nNo computers found. Is the helper installed on the computer, and is Tailscale on on both?");
+                    else log.append("\n\nDone.");
+                });
+            }
+        });
+    }
+
+    /** Adds a synced computer, or updates the one with the same address. True when it's new. */
+    private boolean keepComputer(Prefs.Computer c) {
+        List<Prefs.Computer> list = prefs.computers();
+        for (Prefs.Computer old : list) {
+            if (old.address.trim().equalsIgnoreCase(c.address)) {
+                old.name = c.name;
+                old.key = c.key;
+                prefs.setComputers(list);
+                return false;
+            }
+        }
+        list.add(c);
+        prefs.setComputers(list);
+        if (list.size() == 1) prefs.setCurrent(0);
+        return true;
     }
 
     /** Add (at = -1) or edit a computer. */
@@ -1292,16 +1641,58 @@ public class MainActivity extends Activity {
     }
 
     private TextView pill(String text, boolean primary, View.OnClickListener click) {
-        TextView b = text(text, primary ? Color.WHITE : TEXT, 17);
+        TextView b = text(text.toUpperCase(Locale.ROOT), TEXT, 18);
+        b.setTypeface(display());
+        b.setLetterSpacing(0.06f);
         b.setGravity(Gravity.CENTER);
         b.setMinWidth(dp(104));
         b.setMinHeight(dp(48));
         b.setPadding(dp(20), 0, dp(20), 0);
-        GradientDrawable bg = rounded(primary ? ACCENT : Color.TRANSPARENT, 10);
-        if (!primary) bg.setStroke(dp(1), OUTLINE);
+        GradientDrawable bg = rounded(Color.TRANSPARENT, 10);
+        if (primary) {
+            bg.setOrientation(GradientDrawable.Orientation.LEFT_RIGHT);
+            bg.setColors(new int[] {Wave.FIRE[0], Wave.FIRE[1], Wave.FIRE[2]});
+        } else {
+            bg.setStroke(dp(1), OUTLINE);
+        }
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), bg, null));
         b.setOnClickListener(click);
         return b;
+    }
+
+    /** A pill with an icon before its text. */
+    private TextView pill(int iconRes, String text, boolean primary, View.OnClickListener click) {
+        TextView b = pill(text, primary, click);
+        android.graphics.drawable.Drawable d = getDrawable(iconRes).mutate();
+        d.setBounds(0, 0, dp(20), dp(20));
+        d.setTint(TEXT);
+        b.setCompoundDrawablesRelative(d, null, null, null);
+        b.setCompoundDrawablePadding(dp(8));
+        return b;
+    }
+
+    private android.graphics.Typeface display;
+
+    /** Barlow Condensed SemiBold: titles and buttons. */
+    private android.graphics.Typeface display() {
+        if (display == null) display = getResources().getFont(R.font.barlow_condensed_semibold);
+        return display;
+    }
+
+    /** A title in the condensed uppercase face, spaced wide. */
+    private TextView title(String s, int sp, float spacing) {
+        TextView t = text(s.toUpperCase(Locale.ROOT), TEXT, sp);
+        t.setTypeface(display());
+        t.setLetterSpacing(spacing);
+        return t;
+    }
+
+    /** The raven over the moon. */
+    private ImageView logo(int sizeDp) {
+        ImageView v = new ImageView(this);
+        v.setImageResource(R.mipmap.ic_launcher);
+        v.setLayoutParams(new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)));
+        return v;
     }
 
     private GradientDrawable rounded(int fill, int radiusDp) {
@@ -1370,9 +1761,11 @@ public class MainActivity extends Activity {
     // ---- layout helpers
 
     private void setPage(LinearLayout page) {
-        // Android 15 draws apps edge to edge: pad the page clear of the system bars and the keyboard.
+        // Android 15 draws apps edge to edge: pad the page clear of the system bars and the keyboard. The drawing
+        // page stays its size under the keyboard (the picture slides instead, see markerDialog).
         page.setOnApplyWindowInsetsListener((v, in) -> {
-            android.graphics.Insets i = in.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
+            int types = WindowInsets.Type.systemBars() | (page == drawPage ? 0 : WindowInsets.Type.ime());
+            android.graphics.Insets i = in.getInsets(types);
             v.setPadding(i.left, i.top, i.right, i.bottom);
             return WindowInsets.CONSUMED;
         });

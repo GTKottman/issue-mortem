@@ -14,6 +14,11 @@ func showInfo(text string) {
 	windows.MessageBox(0, t, c, windows.MB_OK|windows.MB_ICONINFORMATION)
 }
 
+// hide keeps a console program (tailscale.exe) from flashing a window.
+func hide(c *exec.Cmd) {
+	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+}
+
 func detach(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP}
 }

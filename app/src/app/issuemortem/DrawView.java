@@ -11,6 +11,10 @@ import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.text.Layout;
+import android.text.StaticLayout;
+import android.text.TextPaint;
+import android.text.TextUtils;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
@@ -129,8 +133,25 @@ public class DrawView extends View {
     private float scale = 1, ox, oy, fitScale = 1;
 
     // gestures
-    private static final int NONE = 0, DRAW = 1, PAN = 2, PINCH = 3;
+    private static final int NONE = 0, DRAW = 1, PAN = 2, PINCH = 3, NOTE = 4;
     private int mode = NONE, drawPointer = -1;
+
+    // Each marker's note shows in a card beside it, in screen space (same size at any zoom). Tapping a card or a
+    // marker's dot opens its note with any tool. The marker being edited hides its card (the editor sits there).
+    private final List<RectF> cardRects = new ArrayList<>();
+    private final List<Marker> cardMarkers = new ArrayList<>();
+    private final TextPaint cardText = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint cardFill = new Paint(Paint.ANTI_ALIAS_FLAG), cardLine = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private Stroke editing;
+    private Marker tapped;
+
+    // Crop: the part of the picture that Issue, Send and Save use (picture pixels; null = all of it). While cropping,
+    // a finger or the pen drags the box's corners or edges, moves it from inside, or draws a new one from outside.
+    private RectF crop, cropEdit;
+    private boolean cropping;
+    private int cropGrab; // which sides move: 1 left, 2 top, 4 right, 8 bottom; 15 = the whole box; 0 = a new box
+    private float cropX, cropY;
+    private final Paint cropShade = new Paint(), cropLine = new Paint(Paint.ANTI_ALIAS_FLAG);
     private float lastX, lastY, span0, scale0, imgMidX, imgMidY;
     private float holdX, holdY;
     private final Runnable hold = this::snapToShape;
@@ -157,6 +178,8 @@ public class DrawView extends View {
         undo.clear();
         redo.clear();
         current = null;
+        crop = null;
+        cropping = false;
         deselect();
         fit();
         notifyChanged();
@@ -166,11 +189,132 @@ public class DrawView extends View {
         return shot;
     }
 
-    /** The picture with the ink on it, at full size (no grid). */
+    /** The picture with the ink on it, at full size (no grid), cut to the crop if there is one. */
     public Bitmap render() {
         Bitmap out = shot.copy(Bitmap.Config.ARGB_8888, true);
         new Canvas(out).drawBitmap(inkLayer, 0, 0, null);
-        return out;
+        if (crop == null) return out;
+        android.graphics.Rect r = new android.graphics.Rect();
+        crop.round(r);
+        return Bitmap.createBitmap(out, r.left, r.top, r.width(), r.height());
+    }
+
+    // ---- crop
+
+    public boolean isCropping() {
+        return cropping;
+    }
+
+    public boolean isCropped() {
+        return crop != null;
+    }
+
+    /** Shows the crop box (the last crop, or the whole picture) to drag. */
+    public void startCrop() {
+        cropEdit = crop != null ? new RectF(crop) : new RectF(0, 0, shot.getWidth(), shot.getHeight());
+        cropping = true;
+        mode = NONE;
+        cancelStroke();
+        fit();
+        invalidate();
+    }
+
+    /** keep: use the box. Otherwise the crop stays what it was. */
+    public void endCrop(boolean keep) {
+        if (keep) {
+            boolean whole = cropEdit.left <= 0 && cropEdit.top <= 0
+                    && cropEdit.right >= shot.getWidth() && cropEdit.bottom >= shot.getHeight();
+            crop = whole ? null : new RectF(cropEdit);
+        }
+        cropping = false;
+        cropEdit = null;
+        invalidate();
+        notifyChanged();
+    }
+
+    /** Back to the whole picture. */
+    public void resetCrop() {
+        if (cropping) cropEdit.set(0, 0, shot.getWidth(), shot.getHeight());
+        else crop = null;
+        invalidate();
+        notifyChanged();
+    }
+
+    /** Darkens what the crop leaves out; while cropping, also the box and its corner handles. */
+    private void drawCrop(Canvas c) {
+        RectF b = cropping ? cropEdit : crop;
+        if (b == null) return;
+        float d = getResources().getDisplayMetrics().density;
+        float l = ox + b.left * scale, t = oy + b.top * scale, r = ox + b.right * scale, bt = oy + b.bottom * scale;
+        cropShade.setColor(cropping ? 0x99000000 : 0xB30D0424);
+        Path out = new Path();
+        out.setFillType(Path.FillType.EVEN_ODD);
+        out.addRect(0, 0, getWidth(), getHeight(), Path.Direction.CW);
+        out.addRect(l, t, r, bt, Path.Direction.CW);
+        c.drawPath(out, cropShade);
+        if (!cropping) return;
+        cropLine.setStyle(Paint.Style.STROKE);
+        cropLine.setColor(Color.WHITE);
+        cropLine.setStrokeWidth(1.5f * d);
+        c.drawRect(l, t, r, bt, cropLine);
+        cropLine.setStrokeWidth(4 * d);
+        float k = 22 * d;
+        for (float[] p : new float[][] {{l, t, 1, 1}, {r, t, -1, 1}, {l, bt, 1, -1}, {r, bt, -1, -1}}) {
+            c.drawLine(p[0], p[1], p[0] + k * p[2], p[1], cropLine);
+            c.drawLine(p[0], p[1], p[0], p[1] + k * p[3], cropLine);
+        }
+    }
+
+    private void cropDown(float vx, float vy) {
+        float reach = 28 * getResources().getDisplayMetrics().density / scale;
+        float x = (vx - ox) / scale, y = (vy - oy) / scale;
+        RectF b = cropEdit;
+        cropGrab = 0;
+        boolean inY = y > b.top - reach && y < b.bottom + reach, inX = x > b.left - reach && x < b.right + reach;
+        if (inY && Math.abs(x - b.left) < reach) cropGrab |= 1;
+        if (inX && Math.abs(y - b.top) < reach) cropGrab |= 2;
+        if (inY && Math.abs(x - b.right) < reach) cropGrab |= 4;
+        if (inX && Math.abs(y - b.bottom) < reach) cropGrab |= 8;
+        if (cropGrab == 0 && b.contains(x, y)) cropGrab = 15;
+        cropX = clampX(x);
+        cropY = clampY(y);
+        if (cropGrab == 0) b.set(cropX, cropY, cropX, cropY);
+    }
+
+    private void cropMove(float vx, float vy) {
+        float x = clampX((vx - ox) / scale), y = clampY((vy - oy) / scale);
+        RectF b = cropEdit;
+        if (cropGrab == 15) {
+            float dx = Math.max(-b.left, Math.min(shot.getWidth() - b.right, x - cropX));
+            float dy = Math.max(-b.top, Math.min(shot.getHeight() - b.bottom, y - cropY));
+            b.offset(dx, dy);
+            cropX += dx;
+            cropY += dy;
+            return;
+        }
+        float min = 16 * getResources().getDisplayMetrics().density / scale;
+        if (cropGrab == 0) {
+            b.set(Math.min(cropX, x), Math.min(cropY, y), Math.max(cropX, x), Math.max(cropY, y));
+            return;
+        }
+        if ((cropGrab & 1) != 0) b.left = Math.min(x, b.right - min);
+        if ((cropGrab & 2) != 0) b.top = Math.min(y, b.bottom - min);
+        if ((cropGrab & 4) != 0) b.right = Math.max(x, b.left + min);
+        if ((cropGrab & 8) != 0) b.bottom = Math.max(y, b.top + min);
+    }
+
+    /** A box drawn by a tap (too small to mean anything) goes back to the whole picture. */
+    private void cropUp() {
+        float min = 16 * getResources().getDisplayMetrics().density / scale;
+        if (cropEdit.width() < min || cropEdit.height() < min) cropEdit.set(0, 0, shot.getWidth(), shot.getHeight());
+    }
+
+    private float clampX(float x) {
+        return Math.max(0, Math.min(shot.getWidth(), x));
+    }
+
+    private float clampY(float y) {
+        return Math.max(0, Math.min(shot.getHeight(), y));
     }
 
     public String toJson() throws JSONException {
@@ -365,6 +509,26 @@ public class DrawView extends View {
         notifyChanged();
     }
 
+    /** Where the picture sits on screen (zoom and position), to put back later with setView. */
+    public float[] getView() {
+        return new float[] {scale, ox, oy};
+    }
+
+    public void setView(float[] v) {
+        scale = v[0];
+        ox = v[1];
+        oy = v[2];
+        invalidate();
+        notifyChanged();
+    }
+
+    /** Slides the picture up or down so this marker sits at screen height vy. */
+    public void slideTo(Marker m, float vy) {
+        oy = vy - m.stroke.p[1] * scale;
+        invalidate();
+        notifyChanged();
+    }
+
     /** Zoom as a percentage of "fit to screen". */
     public int zoomPercent() {
         return Math.round(scale / fitScale * 100);
@@ -551,6 +715,64 @@ public class DrawView extends View {
             c.drawRect(r, guide);
         }
         c.restore();
+        drawCrop(c);
+        if (!cropping) drawCards(c);
+    }
+
+    private void drawCards(Canvas c) {
+        float d = getResources().getDisplayMetrics().density;
+        cardRects.clear();
+        cardMarkers.clear();
+        cardText.setColor(Color.WHITE);
+        cardText.setTextSize(15 * d * getResources().getConfiguration().fontScale);
+        cardFill.setColor(0xD9140735);
+        cardLine.setStyle(Paint.Style.STROKE);
+        cardLine.setStrokeWidth(d);
+        cardLine.setColor(0x33FFFFFF);
+        int w = (int) (260 * d), pad = (int) (12 * d);
+        for (Marker m : markers()) {
+            Stroke s = m.stroke;
+            if (s == editing || s.text.trim().isEmpty()) continue;
+            float sx = ox + s.p[0] * scale, sy = oy + s.p[1] * scale, r = s.width * scale;
+            StaticLayout text = StaticLayout.Builder.obtain(s.text, 0, s.text.length(), cardText, w - 2 * pad)
+                    .setMaxLines(4).setEllipsize(TextUtils.TruncateAt.END).setAlignment(Layout.Alignment.ALIGN_NORMAL).build();
+            float h = text.getHeight() + 2 * pad;
+            float left = sx + r + 8 * d;
+            if (left + w > getWidth() - 8 * d) left = sx - r - 8 * d - w; // no room on the right: the left side
+            float top = Math.max(8 * d, Math.min(getHeight() - h - 8 * d, sy - 22 * d));
+            RectF box = new RectF(left, top, left + w, top + h);
+            c.drawRoundRect(box, 12 * d, 12 * d, cardFill);
+            c.drawRoundRect(box, 12 * d, 12 * d, cardLine);
+            c.save();
+            c.translate(left + pad, top + pad);
+            text.draw(c);
+            c.restore();
+            cardRects.add(box);
+            cardMarkers.add(m);
+        }
+    }
+
+    /** The marker whose card or dot is under this screen point, or null. */
+    private Marker noteAt(float vx, float vy) {
+        for (int i = cardRects.size() - 1; i >= 0; i--) if (cardRects.get(i).contains(vx, vy)) return cardMarkers.get(i);
+        float x = (vx - ox) / scale, y = (vy - oy) / scale;
+        for (Marker m : markers()) {
+            Stroke s = m.stroke;
+            if (Math.hypot(s.p[0] - x, s.p[1] - y) <= s.width * 1.3f) return m;
+        }
+        return null;
+    }
+
+    /** Where a marker is on screen: x, y and its radius. */
+    public float[] screenOf(Marker m) {
+        Stroke s = m.stroke;
+        return new float[] {ox + s.p[0] * scale, oy + s.p[1] * scale, s.width * scale};
+    }
+
+    /** The marker whose note is open (its card hides), or null. */
+    public void setEditing(Marker m) {
+        editing = m == null ? null : m.stroke;
+        invalidate();
     }
 
     // ---- pen, highlighter, arrow and eraser strokes
@@ -887,10 +1109,40 @@ public class DrawView extends View {
     public boolean onTouchEvent(MotionEvent e) {
         if (shot == null) return false;
         int i = e.getActionIndex();
+        if (cropping) {
+            // One finger or the pen moves the crop box; a second finger cancels that and pinches or pans as usual.
+            int a = e.getActionMasked();
+            if (a == MotionEvent.ACTION_DOWN) {
+                requestUnbufferedDispatch(e);
+                mode = DRAW;
+                cropDown(e.getX(), e.getY());
+            } else if (a == MotionEvent.ACTION_MOVE && mode == DRAW) {
+                cropMove(e.getX(), e.getY());
+            } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
+                if (mode == DRAW) cropUp();
+                mode = NONE;
+            } else if (a == MotionEvent.ACTION_POINTER_DOWN && mode == DRAW) {
+                cropUp();
+                if (e.getPointerCount() >= 2) startPinch(e);
+            } else if (mode != DRAW) {
+                if (a == MotionEvent.ACTION_MOVE && mode == PINCH && e.getPointerCount() >= 2) {
+                    float mx = (e.getX(0) + e.getX(1)) / 2, my = (e.getY(0) + e.getY(1)) / 2;
+                    float span = (float) Math.hypot(e.getX(0) - e.getX(1), e.getY(0) - e.getY(1));
+                    scale = Math.max(fitScale * 0.5f, Math.min(fitScale * 12f, scale0 * span / Math.max(span0, 1)));
+                    ox = mx - imgMidX * scale;
+                    oy = my - imgMidY * scale;
+                    notifyChanged();
+                } else if (a == MotionEvent.ACTION_POINTER_UP) mode = NONE;
+            }
+            invalidate();
+            return true;
+        }
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 requestUnbufferedDispatch(e);
-                if (isPen(e, 0) || !stylusSeen) startStroke(e, 0);
+                tapped = noteAt(e.getX(), e.getY());
+                if (tapped != null) mode = NOTE;
+                else if (isPen(e, 0) || !stylusSeen) startStroke(e, 0);
                 else { mode = PAN; lastX = e.getX(); lastY = e.getY(); }
                 break;
             case MotionEvent.ACTION_POINTER_DOWN:
@@ -926,6 +1178,10 @@ public class DrawView extends View {
                 break;
             case MotionEvent.ACTION_UP:
                 if (mode == DRAW) finish(e, 0);
+                else if (mode == NOTE && listener != null) {
+                    Marker up = noteAt(e.getX(), e.getY());
+                    if (up != null && up.stroke == tapped.stroke) listener.markerNote(tapped, false);
+                }
                 mode = NONE;
                 break;
             case MotionEvent.ACTION_CANCEL:

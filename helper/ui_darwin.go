@@ -22,6 +22,8 @@ func showInfo(text string) {
 	}
 }
 
+func hide(c *exec.Cmd) {}
+
 func detach(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }

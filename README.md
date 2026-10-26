@@ -50,19 +50,10 @@ Download the installer for your computer from the [Releases](../../releases) pag
 
 (Raspberry Pi and other ARM Linux: the `arm64` / `aarch64` files.)
 
-When the install finishes, a window shows what to type into the app:
-
-```
-Issue Mortem Helper 0.0.1
-
-In the app, open Settings > Add computer and type:
-
-Name:  my-desktop
-Address:  100.101.102.103:8642
-Key:  k7m2p-x9q4r-t3vw8
-
-Notes you Send or Save from the app go to /home/you/Issue Mortem
-```
+When the install finishes, the helper's window opens. It shows this computer's name, Tailscale address and key, each
+with a **Copy** button, and an **Open** button for the folder where notes you Send or Save land (`~/Issue Mortem`).
+It opens as an app window in Chrome, Edge, Chromium or Brave if you have one, otherwise in your default browser, and
+only this computer can open it.
 
 The helper then runs in the background and starts by itself at every login. To see the window again, open
 **Issue Mortem Helper** from the Start menu (Windows), the Applications folder (Mac) or the app menu (Linux).
@@ -90,9 +81,15 @@ key; the app then needs the new one).
 
 1. Download `Issue Mortem.apk` from [Releases](../../releases) on the tablet and open it. Android asks to allow
    installing from your browser or Files app: allow it.
-2. Open **Settings > Add computer** and type the name, address and key the helper printed. Tap **Test**: it should
-   say *Working*. Add as many computers as you like. With more than one, the start page shows **From** so you can
-   pick where the screenshot comes from.
+2. Open **Settings** and tap **Sync**. For a minute the app listens, and every computer with the helper running finds
+   it over Tailscale and adds itself (name, address and key). Nothing to do on the computers. Each one then shows
+   *Online* in Settings.
+   - Sync needs Tailscale on, on both, and signed in to the **same Tailscale account**: helpers only offer themselves
+     to Android devices of their own account.
+   - Or tap **Add computer** and type the name, address and key from the helper's window.
+
+   Add as many computers as you like. With more than one, the start page shows **From** so you can pick where the
+   screenshot comes from.
 
 ### 4. GitHub (once)
 
@@ -143,6 +140,10 @@ In a private repo the pictures stay private: only people who can see the repo ca
 ## Security
 
 - The helper only answers requests that carry its key, and waits a second after a wrong one.
+- Sync: every few seconds the helper asks `tailscale status` for the online Android devices of its own Tailscale
+  account and offers them its name, address and key. A device only takes the offer during the minute after you tap
+  **Sync**, and only from a Tailscale address.
+- The helper's window is served only to the computer itself (`http://127.0.0.1:8642/`).
 - It listens on every network of the computer. Use the **Tailscale** address in the app: Tailscale encrypts the
   traffic. Over plain Wi-Fi the key and screenshots travel unencrypted, so anyone on that Wi-Fi could read them.
 - Anyone with the key can see your screen. Keep it private; `-new-key` replaces it.
@@ -173,4 +174,7 @@ Pushing a tag like `v1.0.0` builds all of them plus the app on GitHub Actions an
 `KEYSTORE_PASS` and `KEY_ALIAS`.
 
 The helper's API, if you want to write your own: `GET /api/hello`, `GET /api/screen` (PNG) and
-`PUT /api/file?path=/folder/name.ext`, each with the header `X-Key: <key>`.
+`PUT /api/file?path=/folder/name.ext`, each with the header `X-Key: <key>`. Sync: while syncing, the app listens on
+port 8642 for `POST /sync` with `{"name", "address", "key"}`.
+
+The helper's window uses Barlow Condensed (SIL Open Font License; copies in `helper/web/OFL.txt` and `app/FONT-OFL.txt`); the app ships the same font.
